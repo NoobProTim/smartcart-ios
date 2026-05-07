@@ -6,10 +6,10 @@
 import Foundation
 
 struct Item: Identifiable, Hashable {
-    let id: Int64
-    let nameNormalised: String
-    let nameDisplay: String
-    let category: String?
-    let unit: String?
+    let id: Int64              // Primary key
+    let nameNormalised: String // Dedup + Flipp search key. e.g. "oatly oat milk 1l"
+    let nameDisplay: String    // UI label. e.g. "Oat Milk — Oatly 1L"
+    let category: String?      // nil until CategoryClassifier runs (post-MVP)
+    let unit: String?          // e.g. "each", "100g", "L"
     let createdAt: Date
 }

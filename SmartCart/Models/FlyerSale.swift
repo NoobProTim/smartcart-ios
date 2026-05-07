@@ -1,5 +1,8 @@
 // FlyerSale.swift — SmartCart/Models/FlyerSale.swift
 // One sale or flyer event. Maps to `flyer_sales`.
+// Rows are inserted with INSERT OR IGNORE (Fix P1-8) — unique index on
+// (item_id, store_id, sale_start_date, sale_price) prevents duplicate rows
+// from accumulating on every daily sync.
 
 import Foundation
 

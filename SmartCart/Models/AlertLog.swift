@@ -8,9 +8,8 @@ import Foundation
 struct AlertLog: Identifiable {
     let id: Int64
     let itemID: Int64
-    let alertType: String       // "historical_low" | "sale" | "expiry" | "combined"
+    let alertType: String       // "historical_low" | "sale" | "expiry"
     let triggerPrice: Double
     let firedAt: Date
-    let notificationID: String?
-    let saleEventID: Int64?
+    let notificationID: String? // nil when permission denied
 }

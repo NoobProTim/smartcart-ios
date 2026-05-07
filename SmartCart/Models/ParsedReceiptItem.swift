@@ -1,13 +1,14 @@
 // ParsedReceiptItem.swift — SmartCart/Models/ParsedReceiptItem.swift
 // OCR-extracted line item from a scanned receipt. NOT persisted to SQLite.
 // ReceiptReviewView shows a list of these to the user.
+// Confirmed items are passed to DatabaseManager.upsertItem().
 
 import Foundation
 
 enum ConfidenceLevel {
-    case high
-    case medium
-    case low
+    case high    // Strong name + clear price — pre-selected for import
+    case medium  // Name or price ambiguous — pre-selected but flagged
+    case low     // Likely noise (tax, total, store header) — deselected by default
 }
 
 struct ParsedReceiptItem: Identifiable {
