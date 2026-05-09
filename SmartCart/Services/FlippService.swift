@@ -9,6 +9,9 @@
 //   ELSE → regular shelf price
 //     → write to price_history only
 //
+// P0-C: guard storeID > 0 added to processResponse() to exclude
+// sentinel rows (storeID = -1) and legacy storeID = 0 rows from all writes.
+//
 // Call FlippService.shared.syncAllItems() from BackgroundSyncManager.
 
 import Foundation
@@ -38,6 +41,11 @@ final class FlippService {
 
         for item in userItems {
             for store in stores {
+                // P0-C: Exclude any store with a sentinel or zero ID.
+                guard store.id > 0 else {
+                    print("[FlippService] Skipping store with invalid ID \(store.id) for item \(item.nameDisplay)")
+                    continue
+                }
                 await fetchPrice(
                     itemName: item.nameDisplay,
                     itemID: item.itemID,
@@ -95,6 +103,12 @@ final class FlippService {
     // MARK: - Response parsing & routing
 
     private func processResponse(data: Data, itemID: Int64, storeID: Int64, storeName: String) throws {
+        // P0-C: Hard guard — never write price data for sentinel or zero store IDs.
+        guard storeID > 0 else {
+            print("[FlippService] processResponse called with invalid storeID \(storeID) — skipping.")
+            return
+        }
+
         let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
         // Flipp returns { "items": [ { ... }, ... ] }
         guard let items = json?["items"] as? [[String: Any]] else { return }
