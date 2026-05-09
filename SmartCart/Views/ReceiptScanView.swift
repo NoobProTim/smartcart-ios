@@ -1,18 +1,18 @@
 // ReceiptScanView.swift — SmartCart/Views/ReceiptScanView.swift
-//
-// Camera → OCR → review scanned items → confirm import to database.
-
 import SwiftUI
 import PhotosUI
+import AVFoundation
 
 struct ReceiptScanView: View {
 
-    @State private var showCamera      = false
-    @State private var showPhotoPicker = false
+    @State private var showCamera           = false
+    @State private var showPhotoPicker      = false
     @State private var pickerItem: PhotosPickerItem? = nil
     @State private var scanResult: ReceiptScanResult? = nil
-    @State private var isScanning      = false
+    @State private var isScanning           = false
     @State private var errorMessage: String? = nil
+    // P1-B: shown when camera permission is denied/restricted
+    @State private var showPermissionSheet  = false
 
     var body: some View {
         NavigationStack {
@@ -27,9 +27,7 @@ struct ReceiptScanView: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 40)
 
-                if isScanning {
-                    ProgressView("Scanning…")
-                }
+                if isScanning { ProgressView("Scanning…") }
 
                 if let err = errorMessage {
                     Text(err)
@@ -41,7 +39,8 @@ struct ReceiptScanView: View {
 
                 VStack(spacing: 12) {
                     Button {
-                        showCamera = true
+                        // P1-B: Check permission before presenting camera.
+                        checkCameraPermissionAndPresent()
                     } label: {
                         Label("Take Photo", systemImage: "camera.fill")
                             .frame(maxWidth: .infinity)
@@ -49,10 +48,7 @@ struct ReceiptScanView: View {
                     .buttonStyle(.borderedProminent)
                     .padding(.horizontal, 40)
 
-                    PhotosPicker(
-                        selection: $pickerItem,
-                        matching: .images
-                    ) {
+                    PhotosPicker(selection: $pickerItem, matching: .images) {
                         Label("Choose from Library", systemImage: "photo.on.rectangle")
                             .frame(maxWidth: .infinity)
                     }
@@ -66,82 +62,141 @@ struct ReceiptScanView: View {
                 Spacer()
             }
             .navigationTitle("Scan Receipt")
-            .fullScreenCover(isPresented: $showCamera) {
-                CameraPickerView { image in
-                    showCamera = false
-                    Task { await scan(image: image) }
-                }
-            }
+            // P1-H: .sheet(item:) uses UUID-backed Identifiable — no hash collision.
             .sheet(item: $scanResult) { result in
-                ReceiptReviewView(result: result) {
-                    scanResult = nil
-                }
+                ReceiptReviewView(result: result) { scanResult = nil }
+            }
+            // P1-B: Camera permission denied sheet.
+            .sheet(isPresented: $showPermissionSheet) {
+                cameraPermissionDeniedSheet
+            }
+            .fullScreenCover(isPresented: $showCamera) {
+                CameraPickerView(
+                    onImage: { image in
+                        showCamera = false
+                        Task { await scan(image: image) }
+                    },
+                    onError: { message in
+                        showCamera = false
+                        errorMessage = message
+                    }
+                )
             }
         }
     }
 
-    // MARK: - Scan helpers
+    // MARK: - P1-B: Permission gate
+    private func checkCameraPermissionAndPresent() {
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        switch status {
+        case .authorized:
+            showCamera = true
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                DispatchQueue.main.async {
+                    if granted { showCamera = true }
+                    else       { showPermissionSheet = true }
+                }
+            }
+        case .denied, .restricted:
+            showPermissionSheet = true
+        @unknown default:
+            showCamera = true
+        }
+    }
 
+    @ViewBuilder
+    private var cameraPermissionDeniedSheet: some View {
+        VStack(spacing: 20) {
+            Spacer()
+            Image(systemName: "camera.fill")
+                .font(.system(size: 48))
+                .foregroundStyle(.secondary)
+            Text("Camera Access Required")
+                .font(.title2.weight(.semibold))
+            Text("Camera access is needed to scan receipts. Please enable it in Settings.")
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 32)
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            Button("Not Now") { showPermissionSheet = false }
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .presentationDetents([.medium])
+    }
+
+    // MARK: - Scan helpers
     private func loadAndScan(item: PhotosPickerItem) async {
-        isScanning = true
-        errorMessage = nil
+        isScanning = true; errorMessage = nil
         do {
-            guard let data = try await item.loadTransferable(type: Data.self),
+            guard let data  = try await item.loadTransferable(type: Data.self),
                   let image = UIImage(data: data) else {
-                errorMessage = "Could not load image."
-                isScanning = false
-                return
+                errorMessage = "Could not load image."; isScanning = false; return
             }
             await scan(image: image)
         } catch {
-            errorMessage = error.localizedDescription
-            isScanning = false
+            errorMessage = error.localizedDescription; isScanning = false
         }
     }
 
     private func scan(image: UIImage) async {
-        isScanning = true
-        errorMessage = nil
+        isScanning = true; errorMessage = nil
         do {
             let result = try await ReceiptScannerService.shared.scan(image: image)
             await MainActor.run {
                 isScanning = false
-                if result.items.isEmpty {
-                    errorMessage = "No items found. Try a clearer photo."
-                } else {
-                    scanResult = result
-                }
+                if result.items.isEmpty { errorMessage = "No items found. Try a clearer photo." }
+                else                    { scanResult = result }
             }
         } catch {
-            await MainActor.run {
-                isScanning = false
-                errorMessage = error.localizedDescription
-            }
+            await MainActor.run { isScanning = false; errorMessage = error.localizedDescription }
         }
     }
 }
 
-// Wraps UIImagePickerController for camera access.
+// P1-B: CameraPickerView guards against simulator / unavailable source type.
 struct CameraPickerView: UIViewControllerRepresentable {
     let onImage: (UIImage) -> Void
+    let onError: (String) -> Void
 
-    func makeCoordinator() -> Coordinator { Coordinator(onImage: onImage) }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onImage: onImage, onError: onError)
+    }
 
-    func makeUIViewController(context: Context) -> UIImagePickerController {
+    func makeUIViewController(context: Context) -> UIViewController {
+        // P1-B: Simulator / iPod guard — never crash on unavailable source type.
+        guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+            DispatchQueue.main.async {
+                self.onError("Camera not available on this device.")
+            }
+            return UIViewController()
+        }
         let picker = UIImagePickerController()
         picker.sourceType = .camera
-        picker.delegate = context.coordinator
+        picker.delegate   = context.coordinator
         return picker
     }
 
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
+    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
 
     class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
         let onImage: (UIImage) -> Void
-        init(onImage: @escaping (UIImage) -> Void) { self.onImage = onImage }
+        let onError: (String) -> Void
+        init(onImage: @escaping (UIImage) -> Void, onError: @escaping (String) -> Void) {
+            self.onImage = onImage; self.onError = onError
+        }
         func imagePickerController(_ picker: UIImagePickerController,
                                    didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
             if let img = info[.originalImage] as? UIImage { onImage(img) }
+        }
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+            picker.dismiss(animated: true)
         }
     }
 }

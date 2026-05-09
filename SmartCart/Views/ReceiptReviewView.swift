@@ -1,13 +1,4 @@
 // ReceiptReviewView.swift — SmartCart/Views/ReceiptReviewView.swift
-//
-// Shows scanned line items for user review before importing to database.
-// User can toggle individual items on/off before confirming.
-//
-// P0-C: If the store cannot be resolved, the Import button is blocked
-// and an inline picker lets the user select the correct store before proceeding.
-// storeID = -1 is used as a sentinel for "Other / Unknown" and is excluded
-// from all Flipp and AlertEngine queries via guard storeID > 0.
-
 import SwiftUI
 
 struct ReceiptReviewView: View {
@@ -16,92 +7,123 @@ struct ReceiptReviewView: View {
     let onDismiss: () -> Void
 
     @State private var confirmed: Set<Int> = []
-    @State private var isImporting = false
-    // P0-C: nil = unresolved, -1 = "Other", >0 = valid store
+    // P1-E: per-row quantity, keyed by item index, default 1
+    @State private var quantities: [Int: Int] = [:]
+    @State private var isImporting            = false
     @State private var resolvedStoreID: Int64?
     @State private var showUnknownStorePicker = false
-    @State private var allStores: [Store] = []
+    @State private var allStores: [Store]     = []
     @Environment(\.dismiss) private var dismiss
 
     init(result: ReceiptScanResult, onDismiss: @escaping () -> Void) {
-        self.result = result
+        // P1-C: debug-only precondition — catches empty-result regressions early.
+        #if DEBUG
+        precondition(!result.items.isEmpty,
+            "ReceiptReviewView must not be instantiated with an empty item list.")
+        #endif
+        self.result    = result
         self.onDismiss = onDismiss
-        _confirmed = State(initialValue: Set(result.items.indices))
+        _confirmed     = State(initialValue: Set(result.items.indices))
+        _quantities    = State(initialValue: Dictionary(
+            uniqueKeysWithValues: result.items.indices.map { ($0, 1) }
+        ))
     }
 
     var body: some View {
         NavigationStack {
-            List {
-                // Store section — shows resolved name or picker prompt.
-                Section("Store") {
-                    if showUnknownStorePicker {
-                        storePickerSection
-                    } else {
-                        Text(result.storeNameRaw ?? "Unknown store")
-                            .foregroundStyle(
-                                resolvedStoreID == nil ? Color.orange : Color.secondary
-                            )
-                        if resolvedStoreID == nil {
-                            Text("Store not recognised — please select below to enable import.")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
+            // P1-C: Zero-item guard — show ContentUnavailableView with a Try Again CTA.
+            if result.items.isEmpty {
+                if #available(iOS 17, *) {
+                    ContentUnavailableView {
+                        Label("No Items Found", systemImage: "doc.text.magnifyingglass")
+                    } description: {
+                        Text("The scan didn't detect any line items. Try a clearer photo.")
+                    } actions: {
+                        Button("Try Again") { dismiss(); onDismiss() }
+                            .buttonStyle(.borderedProminent)
+                    }
+                } else {
+                    VStack(spacing: 16) {
+                        Image(systemName: "doc.text.magnifyingglass")
+                            .font(.system(size: 48)).foregroundStyle(.secondary)
+                        Text("No Items Found").font(.title2.weight(.semibold))
+                        Text("The scan didn't detect any line items. Try a clearer photo.")
+                            .multilineTextAlignment(.center).foregroundStyle(.secondary)
+                        Button("Try Again") { dismiss(); onDismiss() }
+                            .buttonStyle(.borderedProminent)
+                    }
+                    .padding()
+                }
+            } else {
+                List {
+                    Section("Store") {
+                        if showUnknownStorePicker {
+                            storePickerSection
+                        } else {
+                            Text(result.storeNameRaw ?? "Unknown store")
+                                .foregroundStyle(resolvedStoreID == nil ? Color.orange : Color.secondary)
+                            if resolvedStoreID == nil {
+                                Text("Store not recognised — please select below to enable import.")
+                                    .font(.caption).foregroundStyle(.orange)
+                            }
                         }
                     }
-                }
 
-                Section("Items Found (\(result.items.count))") {
-                    ForEach(Array(result.items.enumerated()), id: \.offset) { index, item in
-                        HStack {
-                            Image(systemName: confirmed.contains(index)
-                                  ? "checkmark.circle.fill" : "circle")
-                                .foregroundStyle(confirmed.contains(index) ? .green : .secondary)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.nameRaw)
-                                    .font(.body)
-                                Text(item.nameNormalised)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                    Section("Items Found (\(result.items.count))") {
+                        ForEach(Array(result.items.enumerated()), id: \.offset) { index, item in
+                            HStack {
+                                Image(systemName: confirmed.contains(index)
+                                      ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(confirmed.contains(index) ? .green : .secondary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(item.nameRaw).font(.body)
+                                    Text(item.nameNormalised).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                // P1-E: Quantity stepper — only visible when row is confirmed.
+                                if confirmed.contains(index) {
+                                    Stepper(
+                                        value: Binding(
+                                            get: { quantities[index] ?? 1 },
+                                            set: { quantities[index] = $0 }
+                                        ),
+                                        in: 1...99
+                                    ) {
+                                        Text("×\(quantities[index] ?? 1)")
+                                            .font(.caption.monospacedDigit())
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .labelsHidden()
+                                    .fixedSize()
+                                }
+                                Text("$\(String(format: "%.2f", item.price))")
+                                    .font(.body.monospacedDigit())
                             }
-                            Spacer()
-                            Text("$\(String(format: "%.2f", item.price))")
-                                .font(.body.monospacedDigit())
-                        }
-                        .contentShape(Rectangle())
-                        .onTapGesture {
-                            if confirmed.contains(index) {
-                                confirmed.remove(index)
-                            } else {
-                                confirmed.insert(index)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                if confirmed.contains(index) { confirmed.remove(index) }
+                                else                         { confirmed.insert(index) }
                             }
                         }
                     }
                 }
-            }
-            .navigationTitle("Review Receipt")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        dismiss()
-                        onDismiss()
+                .navigationTitle("Review Receipt")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { dismiss(); onDismiss() }
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button(isImporting ? "Importing…" : "Import") { importItems() }
+                            .disabled(confirmed.isEmpty || isImporting || !isStoreResolved)
                     }
                 }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(isImporting ? "Importing…" : "Import") {
-                        importItems()
-                    }
-                    // P0-C: Import disabled until store is resolved (not nil) and not sentinel.
-                    .disabled(confirmed.isEmpty || isImporting || !isStoreResolved)
-                }
-            }
-            .onAppear {
-                resolveStoreOnAppear()
+                .onAppear { resolveStoreOnAppear() }
             }
         }
     }
 
-    // MARK: - Store picker (shown when auto-resolve fails)
-
+    // MARK: - Store picker
     @ViewBuilder
     private var storePickerSection: some View {
         Picker("Select Store", selection: Binding(
@@ -109,27 +131,19 @@ struct ReceiptReviewView: View {
             set: { resolvedStoreID = $0 }
         )) {
             Text("— Select a store —").tag(Int64(0))
-            ForEach(allStores) { store in
-                Text(store.name).tag(store.id)
-            }
+            ForEach(allStores) { store in Text(store.name).tag(store.id) }
             Text("Other / Unknown").tag(Int64(-1))
         }
         .pickerStyle(.menu)
     }
 
-    // MARK: - Helpers
-
-    // True when the store is resolved to a real store ID (> 0).
-    // Sentinel -1 ("Other") and nil (unresolved) both block import.
     private var isStoreResolved: Bool {
         guard let sid = resolvedStoreID else { return false }
         return sid > 0
     }
 
     private func resolveStoreOnAppear() {
-        // P0-C: Attempt auto-resolve; show picker if it fails.
-        let resolved = ReceiptImportService.shared.resolveStore(nameRaw: result.storeNameRaw)
-        if let sid = resolved {
+        if let sid = ReceiptImportService.shared.resolveStore(nameRaw: result.storeNameRaw) {
             resolvedStoreID = sid
         } else {
             allStores = DatabaseManager.shared.fetchAllStores()
@@ -138,26 +152,24 @@ struct ReceiptReviewView: View {
     }
 
     private func importItems() {
-        // P0-C: Double-check store is resolved before proceeding.
         guard isStoreResolved, let storeID = resolvedStoreID else { return }
-
         isImporting = true
-        let selectedItems = confirmed.sorted().map { result.items[$0] }
-
+        // P1-E: Pass quantity per confirmed item to markPurchased.
+        let selectedItems: [(ParsedReceiptItem, Int)] = confirmed.sorted().map {
+            (result.items[$0], quantities[$0] ?? 1)
+        }
         Task.detached(priority: .userInitiated) {
             ReceiptImportService.shared.importConfirmedItems(
-                items:       selectedItems,
+                items:       selectedItems.map { $0.0 },
+                quantities:  selectedItems.map { $0.1 },
                 storeID:     storeID,
                 receiptDate: result.receiptDate
             )
-            await MainActor.run {
-                dismiss()
-                onDismiss()
-            }
+            await MainActor.run { dismiss(); onDismiss() }
         }
     }
 }
 
-extension ReceiptScanResult: Identifiable {
-    public var id: String { rawLines.joined().hash.description }
-}
+// P1-H: Identifiable conformance removed — ReceiptScanResult now carries
+// a stable UUID id set at scan time by ReceiptScannerService.shared.scan().
+// No Identifiable extension needed here.

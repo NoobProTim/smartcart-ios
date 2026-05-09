@@ -1,25 +1,6 @@
-// HomeView.swift
-// SmartCart — Views/HomeView.swift
-//
-// Task #2 — Part 4: Home / Smart List (WIP)
-//
-// This is the main screen after onboarding. It shows the user's tracked grocery
-// items sorted by how soon they need restocking, with alerted items pinned at top.
-//
-// Sections:
-//   • Today's Deals   — ALL current lows regardless of alert cap (always visible)
-//   • Smart List      — user's tracked items, sorted by restock proximity
-//
-// Pull-to-refresh wired to BackgroundSyncManager.shared.manualRefresh(),
-// but only when last sync was > 1 hour ago (to avoid hammering Flipp API).
-//
-// Notification deep-link: NotificationRouter publishes itemIDToOpen;
-// HomeView listens and pushes ItemDetailView with a 0.3s delay.
-//
-// Empty state: EmptyCTAView with Scan a Receipt CTA.
-// Notification permission denied: NotificationBannerView amber nudge.
-//
-// STATUS: WIP — ReceiptScannerView, ItemDetailView navigation stubs only.
+// HomeView.swift — SmartCart/Views/HomeView.swift
+// P1-D: ItemDetailView is now wired for both itemList NavigationLinks
+//       and the NotificationRouter deep-link destination.
 
 import SwiftUI
 import UserNotifications
@@ -28,17 +9,16 @@ struct HomeView: View {
     @StateObject private var viewModel = HomeViewModel()
     @EnvironmentObject private var notificationRouter: NotificationRouter
 
-    @State private var showScanner = false
+    @State private var showScanner             = false
     @State private var deepLinkedItemID: Int64? = nil
-    @State private var showNotificationBanner = false
-    @State private var isRefreshing = false
-    @State private var lastRefreshDate: Date? = DatabaseManager.shared.lastSyncDate()
+    @State private var showNotificationBanner  = false
+    @State private var isRefreshing            = false
+    @State private var lastRefreshDate: Date?  = DatabaseManager.shared.lastSyncDate()
 
     var body: some View {
         NavigationStack {
             ZStack {
                 if viewModel.items.isEmpty && !viewModel.isLoading {
-                    // First-time empty state
                     EmptyCTAView(onScanTapped: { showScanner = true })
                 } else {
                     itemList
@@ -47,7 +27,6 @@ struct HomeView: View {
             .navigationTitle("SmartCart")
             .navigationBarTitleDisplayMode(.large)
             .toolbar { toolbarContent }
-            // Notification deep-link invisible NavigationLink
             .background(
                 NavigationLink(
                     destination: deepLinkDestination,
@@ -57,20 +36,18 @@ struct HomeView: View {
                     )
                 ) { EmptyView() }
             )
-            // Notification permission banner (safeAreaInset keeps list below it)
             .safeAreaInset(edge: .bottom) {
                 if showNotificationBanner {
                     NotificationBannerView(
                         onDismiss: { withAnimation { showNotificationBanner = false } },
-                        onEnable: { openNotificationSettings() }
+                        onEnable:  { openNotificationSettings() }
                     )
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
             }
         }
         .sheet(isPresented: $showScanner) {
-            // Stub — ReceiptScannerView wired in Task #2 Part 5
-            Text("Receipt Scanner — coming in Part 5")
+            ReceiptScanView()
         }
         .onAppear {
             viewModel.load()
@@ -86,15 +63,15 @@ struct HomeView: View {
         .accessibilityLabel("SmartCart home screen")
     }
 
-    // MARK: — Item list with sections
+    // MARK: - Item list
     private var itemList: some View {
         List {
-            // Today's Deals section — all active price lows, no cap
             let deals = viewModel.todaysDeals
             if !deals.isEmpty {
                 Section {
                     ForEach(deals) { item in
-                        NavigationLink(destination: Text("Item Detail — Part 7 WIP")) {
+                        // P1-D: was Text("Item Detail — Part 7 WIP")
+                        NavigationLink(destination: ItemDetailView(itemID: item.itemID)) {
                             ItemRowView(item: item)
                         }
                     }
@@ -106,19 +83,21 @@ struct HomeView: View {
                 }
             }
 
-            // Smart List section
             Section {
                 ForEach(viewModel.items) { item in
-                    NavigationLink(destination: Text("Item Detail — Part 7 WIP")) {
+                    // P1-D: was Text("Item Detail — Part 7 WIP")
+                    NavigationLink(destination: ItemDetailView(itemID: item.itemID)) {
                         ItemRowView(item: item)
                     }
                 }
             } header: {
                 HStack {
-                    Text("Smart List").font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
+                    Text("Smart List")
+                        .font(.system(size: 13, weight: .semibold)).foregroundStyle(.secondary)
                     Spacer()
                     if let date = lastRefreshDate {
-                        Text("Updated \(date.relativeShort())").font(.system(size: 11)).foregroundStyle(.tertiary)
+                        Text("Updated \(date.relativeShort())")
+                            .font(.system(size: 11)).foregroundStyle(.tertiary)
                     }
                 }
                 .accessibilityLabel("Smart list section")
@@ -126,7 +105,6 @@ struct HomeView: View {
         }
         .listStyle(.insetGrouped)
         .refreshable {
-            // Only refresh if last sync was > 1 hour ago
             guard canRefresh() else { return }
             isRefreshing = true
             await BackgroundSyncManager.shared.manualRefresh()
@@ -136,7 +114,7 @@ struct HomeView: View {
         }
     }
 
-    // MARK: — Toolbar
+    // MARK: - Toolbar
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .navigationBarTrailing) {
@@ -148,23 +126,21 @@ struct HomeView: View {
         }
     }
 
-    // MARK: — Deep-link destination
+    // MARK: - Deep-link destination
     @ViewBuilder
     private var deepLinkDestination: some View {
-        if let itemID = deepLinkedItemID,
-           let item = viewModel.items.first(where: { $0.itemID == itemID }) {
-            // ItemDetailView wired in Task #2 Part 7
-            Text("Item Detail for \(item.nameDisplay) — Part 7 WIP")
+        // P1-D: was Text("Item Detail for … — Part 7 WIP")
+        if let itemID = deepLinkedItemID {
+            ItemDetailView(itemID: itemID)
         } else {
             EmptyView()
         }
     }
 
-    // MARK: — Helpers
-
+    // MARK: - Helpers
     private func canRefresh() -> Bool {
         guard let last = lastRefreshDate else { return true }
-        return Date().timeIntervalSince(last) > 3600 // 1 hour
+        return Date().timeIntervalSince(last) > Constants.minRefreshIntervalSeconds
     }
 
     private func checkNotificationPermission() {
@@ -172,7 +148,6 @@ struct HomeView: View {
             DispatchQueue.main.async {
                 let denied = settings.authorizationStatus == .denied ||
                              settings.authorizationStatus == .notDetermined
-                // Only show if the user has items and hasn't dismissed this session
                 showNotificationBanner = denied && !viewModel.items.isEmpty
             }
         }
@@ -184,35 +159,28 @@ struct HomeView: View {
     }
 }
 
-// MARK: — Item row
-// One row in the Smart List. Shows name, next restock date, alert badge, and current price.
+// MARK: - Item row
 private struct ItemRowView: View {
     let item: UserItem
 
     var body: some View {
         HStack(spacing: 12) {
-            // Alert dot — per-item, not global (Fix P1-5)
-            if item.hasActiveAlert {
-                Circle().fill(Color.orange).frame(width: 8, height: 8)
-                    .accessibilityLabel("Price alert active")
-            } else {
-                Circle().fill(Color.clear).frame(width: 8, height: 8)
-            }
+            Circle()
+                .fill(item.hasActiveAlert ? Color.orange : Color.clear)
+                .frame(width: 8, height: 8)
+                .accessibilityLabel(item.hasActiveAlert ? "Price alert active" : "")
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.nameDisplay)
-                    .font(.system(size: 15, weight: item.isInRestockWindow ? .semibold : .regular))
-                    .foregroundStyle(.primary)
-
+                    .font(.system(size: 15,
+                                  weight: item.isInRestockWindow ? .semibold : .regular))
                 if let restock = item.nextRestockDate {
                     Text(restockLabel(restock))
                         .font(.system(size: 12))
                         .foregroundStyle(item.isInRestockWindow ? Color.accentColor : .secondary)
                 }
             }
-
             Spacer()
-
             if let price = item.lastPurchasedPrice {
                 Text(String(format: "$%.2f", price))
                     .font(.system(size: 14, weight: .medium))
@@ -231,14 +199,12 @@ private struct ItemRowView: View {
     }
 }
 
-// MARK: — Date helper
 extension Date {
-    // Returns a short relative string e.g. "just now", "2 min ago", "3h ago"
     func relativeShort() -> String {
-        let seconds = Int(Date().timeIntervalSince(self))
-        if seconds < 60  { return "just now" }
-        if seconds < 3600 { return "\(seconds / 60)m ago" }
-        if seconds < 86400 { return "\(seconds / 3600)h ago" }
-        return "\(seconds / 86400)d ago"
+        let s = Int(Date().timeIntervalSince(self))
+        if s < 60    { return "just now" }
+        if s < 3600  { return "\(s / 60)m ago" }
+        if s < 86400 { return "\(s / 3600)h ago" }
+        return "\(s / 86400)d ago"
     }
 }
