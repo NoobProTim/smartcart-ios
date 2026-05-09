@@ -1,30 +1,40 @@
 // UserItem.swift — SmartCart/Models/UserItem.swift
-// Join between user's tracked list and a canonical Item. Maps to `user_items`.
-// Replenishment cycle priority: userOverrideCycleDays > inferredCycleDays > default (14d)
 
 import Foundation
 
-struct UserItem: Identifiable {
+struct UserItem: Identifiable, Equatable {
     let id: Int64
     let itemID: Int64
-    let nameDisplay: String          // Convenience copy from joined Item
+    let nameDisplay: String
     let lastPurchasedDate: Date?
     let lastPurchasedPrice: Double?
-    let inferredCycleDays: Int?      // Median interval from purchase_history; nil if < 2 purchases
-    let userOverrideCycleDays: Int?  // User-set in Settings; always wins when present
-    let nextRestockDate: Date?       // = lastPurchasedDate + effectiveCycleDays
-    let hasActiveAlert: Bool         // True if alert_log has a row for this item today
+    let inferredCycleDays: Int?
+    let userOverrideCycleDays: Int?
+    let nextRestockDate: Date?
+    // True when at least one alert for this item fired today.
+    // Populated by DatabaseManager.hasAlertFiredForItem(). Fix P1-5.
+    let hasActiveAlert: Bool
 
-    // The cycle used for all replenishment calculations.
-    var effectiveCycleDays: Int {
-        userOverrideCycleDays ?? inferredCycleDays ?? Constants.defaultReplenishmentDays
+    // The cycle length the app actually uses:
+    // user override takes precedence over the inferred value.
+    var effectiveCycleDays: Int? {
+        userOverrideCycleDays ?? inferredCycleDays
     }
 
-    // True when nextRestockDate is within Constants.restockWindowDays.
-    // Drives pin-to-top on the Smart List.
+    // How many days until (or since) the next suggested restock.
+    // Negative = overdue.
+    var daysUntilRestock: Int? {
+        guard let next = nextRestockDate else { return nil }
+        return Calendar.current.dateComponents([.day], from: Date(), to: next).day
+    }
+
+    // True when the item is inside its restock window:
+    // today >= last_purchased_date + (cycle * 0.5)
     var isInRestockWindow: Bool {
-        guard let restock = nextRestockDate else { return false }
-        let days = Calendar.current.dateComponents([.day], from: Date(), to: restock).day ?? Int.max
-        return days <= Constants.restockWindowDays
+        guard let last = lastPurchasedDate,
+              let cycle = effectiveCycleDays else { return false }
+        let halfCycle = Double(cycle) * 0.5
+        let windowOpen = last.addingTimeInterval(halfCycle * 86_400)
+        return Date() >= windowOpen
     }
 }
