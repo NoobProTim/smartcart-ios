@@ -18,7 +18,6 @@ final class BackgroundSyncManager {
 
     // MARK: - Registration
 
-    // Must be called before applicationDidFinishLaunching completes.
     func registerTasks() {
         BGTaskScheduler.shared.register(
             forTaskWithIdentifier: taskID,
@@ -28,7 +27,6 @@ final class BackgroundSyncManager {
         }
     }
 
-    // Schedules the next background fetch ~24 h from now.
     func scheduleNextRefresh() {
         let request = BGAppRefreshTaskRequest(identifier: taskID)
         request.earliestBeginDate = Date(timeIntervalSinceNow: 60 * 60 * 24)
@@ -38,12 +36,11 @@ final class BackgroundSyncManager {
     // MARK: - Task handler
 
     private func handleAppRefresh(task: BGAppRefreshTask) {
-        // Immediately reschedule so the next day's refresh is queued.
         scheduleNextRefresh()
 
         let work = Task {
-            // 1. Fetch latest prices from Flipp (FlippService not yet implemented — Commit E).
-            // await FlippService.shared.syncAllItems()
+            // 1. Fetch latest prices from Flipp for all tracked items + selected stores.
+            await FlippService.shared.syncAllItems()
 
             // 2. Run data hygiene (delete expired flyer_sales and old alert_log rows).
             DatabaseManager.shared.runDataHygiene()
@@ -54,7 +51,6 @@ final class BackgroundSyncManager {
             task.setTaskCompleted(success: true)
         }
 
-        // If iOS kills the task before it finishes, cancel cleanly.
         task.expirationHandler = {
             work.cancel()
             task.setTaskCompleted(success: false)
