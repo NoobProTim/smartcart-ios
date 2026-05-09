@@ -9,7 +9,7 @@ struct AlertLog: Identifiable {
     let id: Int64
     let itemID: Int64
     let alertType: String       // "historical_low" | "sale" | "expiry"
-    let triggerPrice: Double
+    let triggerPrice: Double    // The price that caused this alert to fire
     let firedAt: Date
-    let notificationID: String? // nil when permission denied
+    let notificationID: String? // "alert-{type}-{itemID}"; nil when permission denied
 }

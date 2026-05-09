@@ -12,15 +12,19 @@ struct FlyerSale: Identifiable {
     let storeID: Int64
     let salePrice: Double
     let validFrom: Date
-    let validTo: Date?
-    let source: String
+    let validTo: Date?    // nil when Flipp omitted valid_to; 7-day estimate applied
+    let source: String    // "flipp" | "flipp_estimated_expiry" | "manual"
     let fetchedAt: Date
 
+    // Percentage discount vs. the item's 90-day rolling average regular price.
+    // Returns nil when averageRegularPrice is zero.
     func discountPercent(averageRegularPrice: Double) -> Double? {
         guard averageRegularPrice > 0 else { return nil }
         return ((averageRegularPrice - salePrice) / averageRegularPrice) * 100
     }
 
+    // True when today falls within [validFrom, validTo].
+    // If validTo is nil, active once started.
     var isActive: Bool {
         let now = Date()
         guard now >= validFrom else { return false }
@@ -28,6 +32,7 @@ struct FlyerSale: Identifiable {
         return true
     }
 
+    // Days until sale expires. nil if validTo is nil. 0 if already ended.
     func expiresInDays() -> Int? {
         guard let end = validTo else { return nil }
         return max(0, Calendar.current.dateComponents([.day], from: Date(), to: end).day ?? 0)

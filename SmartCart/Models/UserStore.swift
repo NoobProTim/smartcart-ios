@@ -9,7 +9,7 @@
 import Foundation
 
 struct UserStore: Identifiable {
-    let id: Int64
-    let storeID: Int64
+    let id: Int64       // = storeID (a user can only have each store once)
+    let storeID: Int64  // Foreign key → stores.id
     let addedAt: Date
 }

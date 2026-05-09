@@ -1,6 +1,8 @@
 // PriceHistory.swift — SmartCart/Models/PriceHistory.swift
 // One regular shelf-price observation. Maps to `price_history`.
 // IMPORTANT: Regular prices ONLY. Sale prices belong in FlyerSale.
+// Keeping them separate lets AlertEngine distinguish new historical lows
+// (regular price drop) from sale events.
 
 import Foundation
 
