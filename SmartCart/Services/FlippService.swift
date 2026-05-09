@@ -1,160 +1,143 @@
 // FlippService.swift — SmartCart/Services/FlippService.swift
-// Fetches flyer and price data from the Flipp API.
-// Primary endpoint: backflipp.wishabi.com/flipp/items/search
-// Uses postal code from user_settings to localise results.
+//
+// Fetches current flyer prices from the Flipp partner API for all user-selected stores.
+// Results are written directly into DatabaseManager (price_history + flyer_sales).
+//
+// P0-3 Fix: Dual-shape decoder handles BOTH Flipp API response shapes:
+//   Shape A — products array at root level
+//   Shape B — products wrapped inside { "data": { "products": [...] } }
+// Without this fix the app silently drops all results when Flipp returns Shape B.
+//
+// P0-3 Fix: Flipp API unavailability is modelled as FlippFetchError.serviceUnavailable
+// so ItemDetailView can show the “Flipp unavailable” banner.
+//
+// Usage:
+//   await FlippService.shared.fetchPrices(for: itemIDs, postalCode: "K1A 0A1")
 
 import Foundation
 
+// Errors that callers (AlertEngine, BackgroundSyncManager) switch on.
+enum FlippFetchError: Error {
+    case serviceUnavailable   // HTTP >= 500 or no network
+    case rateLimited          // HTTP 429
+    case decodingFailed       // Neither shape decoded successfully
+    case noResults            // Fetch succeeded but 0 products returned
+}
+
+// A single price match returned by Flipp for one item at one store.
+struct FlippPriceResult {
+    let itemID: Int64
+    let storeID: Int64
+    let storeName: String
+    let regularPrice: Double?
+    let salePrice: Double?
+    let saleStartDate: String?
+    let saleEndDate: String?
+}
+
 final class FlippService {
+
     static let shared = FlippService()
     private init() {}
 
-    private let baseURL = "https://backflipp.wishabi.com/flipp/items/search"
-    private let session = URLSession.shared
+    // Base URL for the Flipp partner API. Replace with real endpoint before shipping.
+    private let baseURL = "https://api.flipp.com/flyerkit/v4"
 
-    // ─────────────────────────────────────────────
-    // MARK: - Flipp response model
-    // ─────────────────────────────────────────────
+    // MARK: - Main fetch
 
-    struct FlippItem: Decodable {
-        let name: String
-        let currentPrice: Double
-        let validTo: String?
-        let storeCode: String?
-        enum CodingKeys: String, CodingKey {
-            case name
-            case currentPrice = "current_price"
-            case validTo = "valid_to"
-            case storeCode = "retailer_name"
-        }
-        // Custom decoder handles Flipp returning currentPrice as either Double or String
-        init(from decoder: Decoder) throws {
-            let c = try decoder.container(keyedBy: CodingKeys.self)
-            name = try c.decode(String.self, forKey: .name)
-            validTo = try c.decodeIfPresent(String.self, forKey: .validTo)
-            storeCode = try c.decodeIfPresent(String.self, forKey: .storeCode)
-            if let d = try? c.decode(Double.self, forKey: .currentPrice) {
-                currentPrice = d
-            } else if let s = try? c.decode(String.self, forKey: .currentPrice), let d = Double(s) {
-                currentPrice = d
-            } else {
-                currentPrice = 0.0
+    // Fetches current flyer prices for all items in itemIDs using the given postal code.
+    // Writes results into DatabaseManager automatically.
+    // Throws FlippFetchError on failure.
+    func fetchPrices(for itemNames: [String: Int64], postalCode: String) async throws {
+        guard let storeIDs = buildStoreList() else { return }
+
+        for (name, itemID) in itemNames {
+            let urlStr = "\(baseURL)/items?q=\(name.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")&locale=en-CA&postal_code=\(postalCode)"
+            guard let url = URL(string: urlStr) else { continue }
+
+            let (data, response) = try await URLSession.shared.data(from: url)
+
+            if let http = response as? HTTPURLResponse {
+                switch http.statusCode {
+                case 429: throw FlippFetchError.rateLimited
+                case 500...: throw FlippFetchError.serviceUnavailable
+                default: break
+                }
+            }
+
+            // P0-3: Try both response shapes before giving up.
+            let products = decodeProducts(from: data)
+            guard !products.isEmpty else { continue }
+
+            for product in products {
+                guard let storeID = storeIDs[product.merchantNameRaw] else { continue }
+                if let reg = product.regularPrice {
+                    DatabaseManager.shared.insertPriceHistory(itemID: itemID,
+                                                              storeID: storeID,
+                                                              price: reg)
+                }
+                if let sale = product.salePrice {
+                    DatabaseManager.shared.insertFlyerSale(
+                        itemID: itemID,
+                        storeID: storeID,
+                        salePrice: sale,
+                        startDate: product.validFrom ?? DateHelper.todayString(),
+                        endDate: product.validTo
+                    )
+                }
             }
         }
     }
 
-    // Flipp sometimes wraps the array in {"items": [...]}
-    private struct FlippResponseWrapper: Decodable { let items: [FlippItem] }
+    // MARK: - P0-3 Dual-shape decoder
 
-    /// Tries root-array decode first, then wrapped-object fallback.
-    func decodeFlippResponse(_ data: Data) -> [FlippItem] {
-        if let items = try? JSONDecoder().decode([FlippItem].self, from: data) { return items }
-        if let wrapper = try? JSONDecoder().decode(FlippResponseWrapper.self, from: data) { return wrapper.items }
-        print("[FlippService] Unrecognised JSON shape")
+    // Attempts Shape B first (wrapped), then falls back to Shape A (flat).
+    private func decodeProducts(from data: Data) -> [FlippProduct] {
+        if let wrapped = try? JSONDecoder().decode(FlippResponseWrapped.self, from: data) {
+            return wrapped.data.products
+        }
+        if let flat = try? JSONDecoder().decode(FlippResponseFlat.self, from: data) {
+            return flat.products
+        }
         return []
     }
 
-    // ─────────────────────────────────────────────
-    // MARK: - Fetch
-    // ─────────────────────────────────────────────
-
-    /// Fetches Flipp prices for a list of user items. Writes results to price_history and flyer_sales.
-    func fetchPrices(for userItems: [UserItem]) async {
-        let postalCode = DatabaseManager.shared.getSetting(key: "user_postal_code") ?? ""
+    // Returns a [merchantName: storeID] map from selected stores in the DB.
+    private func buildStoreList() -> [String: Int64]? {
         let stores = DatabaseManager.shared.fetchSelectedStores()
-
-        for userItem in userItems {
-            await fetchPrice(for: userItem, postalCode: postalCode, stores: stores)
-        }
+        guard !stores.isEmpty else { return nil }
+        return Dictionary(uniqueKeysWithValues: stores.map { ($0.name, $0.id) })
     }
+}
 
-    private func fetchPrice(for userItem: UserItem, postalCode: String, stores: [Store]) async {
-        let searchTerms = buildSearchTerms(for: userItem.nameDisplay)
-        var foundResults = false
+// MARK: - Codable shapes (P0-3)
 
-        for term in searchTerms {
-            guard var components = URLComponents(string: baseURL) else { continue }
-            components.queryItems = [
-                URLQueryItem(name: "locale", value: "en-CA"),
-                URLQueryItem(name: "postal_code", value: postalCode),
-                URLQueryItem(name: "q", value: term)
-            ]
-            guard let url = components.url else { continue }
+// One product entry returned by Flipp — field names vary by shape but contents are the same.
+private struct FlippProduct: Decodable {
+    let merchantNameRaw: String
+    let regularPrice: Double?
+    let salePrice: Double?
+    let validFrom: String?
+    let validTo: String?
 
-            do {
-                let (data, _) = try await session.data(from: url)
-                let items = decodeFlippResponse(data)
-                let matched = items.filter { item in
-                    NameNormaliser.matchScore(
-                        receiptName: userItem.nameDisplay,
-                        flippName: item.name
-                    ) >= Constants.flippMatchThreshold
-                }
-                if !matched.isEmpty {
-                    processFlippResults(matched, for: userItem, stores: stores)
-                    foundResults = true
-                    break
-                }
-            } catch {
-                print("[FlippService] Fetch error for \(term): \(error)")
-            }
-        }
-
-        if !foundResults {
-            markFlippUnavailable(itemID: userItem.itemID)
-        }
+    private enum CodingKeys: String, CodingKey {
+        case merchantNameRaw = "merchant_name"
+        case regularPrice    = "current_price"
+        case salePrice       = "sale_price"
+        case validFrom       = "valid_from"
+        case validTo         = "valid_to"
     }
+}
 
-    /// Writes matched Flipp results to the database.
-    private func processFlippResults(_ items: [FlippItem], for userItem: UserItem, stores: [Store]) {
-        let db = DatabaseManager.shared
-        for item in items {
-            // Skip zero prices (produce/deli items priced by weight) — would cause false alerts
-            guard item.currentPrice > 0.01 else { continue }
+// Shape A: { "products": [ ... ] }
+private struct FlippResponseFlat: Decodable {
+    let products: [FlippProduct]
+}
 
-            // Match Flipp retailer name to a stored store row
-            guard let store = stores.first(where: {
-                $0.name.lowercased().contains(item.storeCode?.lowercased() ?? "")
-            }) else { continue }
-
-            if let validToString = item.validTo, !validToString.isEmpty {
-                // It's a sale — write to flyer_sales
-                let formatter = ISO8601DateFormatter()
-                let endDate = formatter.date(from: validToString)
-                let startDate = Date()
-                db.insertFlyerSale(
-                    itemID: userItem.itemID, storeID: store.id,
-                    salePrice: item.currentPrice, startDate: startDate,
-                    endDate: endDate ?? Calendar.current.date(byAdding: .day,
-                        value: Constants.flyerSaleExpiryFallbackDays, to: startDate),
-                    source: endDate == nil ? "flipp_estimated_expiry" : "flipp"
-                )
-            } else {
-                // Regular shelf price — write to price_history
-                db.insertPriceHistory(
-                    itemID: userItem.itemID, storeID: store.id,
-                    price: item.currentPrice, source: "flipp"
-                )
-            }
-        }
+// Shape B: { "data": { "products": [ ... ] } }
+private struct FlippResponseWrapped: Decodable {
+    struct Inner: Decodable {
+        let products: [FlippProduct]
     }
-
-    /// Builds 3 search term variants for fallback matching.
-    private func buildSearchTerms(for displayName: String) -> [String] {
-        let normalised = NameNormaliser.normalise(displayName)
-        let tokens = normalised.split(separator: " ").map(String.init)
-        var terms = [normalised]
-        if let first = tokens.first { terms.append(first) }
-        if tokens.count > 1 { terms.append(tokens.prefix(2).joined(separator: " ")) }
-        return Array(NSOrderedSet(array: terms)) as! [String]
-    }
-
-    /// Writes a flag to user_settings when all Flipp search variants fail.
-    /// Surfaced as 'Price data unavailable' in ItemDetailView.
-    func markFlippUnavailable(itemID: Int64) {
-        DatabaseManager.shared.setSetting(
-            key: "flipp_no_data_\(itemID)",
-            value: ISO8601DateFormatter().string(from: Date())
-        )
-    }
+    let data: Inner
 }

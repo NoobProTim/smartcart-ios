@@ -1,65 +1,107 @@
 // BackgroundSyncManager.swift — SmartCart/Services/BackgroundSyncManager.swift
-// Manages daily background price sync via BGAppRefreshTask.
-// Also handles manual pull-to-refresh with a 1-hour cooldown.
+//
+// Coordinates the daily price fetch + alert evaluation cycle.
+// Registered as a BGAppRefreshTask in SmartCartApp so iOS can wake the app once per day.
+//
+// Responsibilities:
+//   1. Read user postal code from DatabaseManager.
+//   2. Collect all user item names for Flipp lookup.
+//   3. Call FlippService.fetchPrices().
+//   4. Call AlertEngine.evaluateAlerts().
+//   5. Write "last_price_refresh" to user_settings.
+//   6. Reschedule the next BGAppRefreshTask.
+//
+// manualRefresh() is exposed to pull-to-refresh in HomeView.
+// It respects a 1-hour cooldown — HomeView checks this before calling.
 
 import Foundation
 import BackgroundTasks
 
 final class BackgroundSyncManager {
+
     static let shared = BackgroundSyncManager()
     private init() {}
 
-    private let taskID = "com.smartcart.priceSync"
+    // Task identifier — must match the entry in Info.plist BGTaskSchedulerPermittedIdentifiers.
+    static let taskID = "com.smartcart.app.pricerefresh"
 
-    /// Register the background task identifier. Call from SmartCartApp init.
+    // MARK: - Registration (call in SmartCartApp.init)
+
+    // Registers the background task handler with iOS.
+    // Must be called before the app finishes launching.
     func registerBackgroundTask() {
-        BGTaskScheduler.shared.register(forTaskWithIdentifier: taskID, using: nil) { task in
-            self.handleBackgroundSync(task: task as! BGAppRefreshTask)
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: Self.taskID, using: nil) { task in
+            self.handleBackgroundTask(task as! BGAppRefreshTask)
         }
     }
 
-    /// Schedule the next background sync ~24h from now.
-    func scheduleNextSync() {
-        let request = BGAppRefreshTaskRequest(identifier: taskID)
-        request.earliestBeginDate = Date(timeIntervalSinceNow: 60 * 60 * 24)
-        try? BGTaskScheduler.shared.submit(request)
-    }
+    // MARK: - Background task handler
 
-    /// Called by the OS when a background slot is granted.
-    private func handleBackgroundSync(task: BGAppRefreshTask) {
-        scheduleNextSync()
-        let syncTask = Task {
-            await runFullSync()
+    // Called by iOS when the background refresh fires.
+    // Sets an expiry handler in case iOS terminates early.
+    private func handleBackgroundTask(_ task: BGAppRefreshTask) {
+        scheduleNextRefresh()
+        let op = Task {
+            await runSync()
             task.setTaskCompleted(success: true)
         }
         task.expirationHandler = {
-            syncTask.cancel()
+            op.cancel()
             task.setTaskCompleted(success: false)
         }
     }
 
-    /// Called from pull-to-refresh — only runs if last sync was > 1 hour ago.
-    func manualRefresh() async {
-        let db = DatabaseManager.shared
-        if let lastStr = db.getSetting(key: "last_price_refresh"),
-           let lastDate = ISO8601DateFormatter().date(from: lastStr) {
-            let hoursSince = Date().timeIntervalSince(lastDate) / 3600
-            guard hoursSince > Double(Constants.manualRefreshCooldownHours) else {
-                print("[BackgroundSyncManager] Skipping refresh — last sync was \(String(format: "%.1f", hoursSince))h ago")
-                return
-            }
-        }
-        await runFullSync()
+    // Schedules the next background refresh ~24 hours from now.
+    private func scheduleNextRefresh() {
+        let request = BGAppRefreshTaskRequest(identifier: Self.taskID)
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 60 * 60 * 23)
+        try? BGTaskScheduler.shared.submit(request)
     }
 
-    /// Runs the full sync pipeline: fetch prices → evaluate alerts.
-    private func runFullSync() async {
-        let userItems = DatabaseManager.shared.fetchUserItems()
-        await FlippService.shared.fetchPrices(for: userItems)
-        await AlertEngine.shared.evaluate()
-        DatabaseManager.shared.setSetting(
-            key: "last_price_refresh",
-            value: ISO8601DateFormatter().string(from: Date())
-        )
+    // MARK: - Manual refresh (pull-to-refresh)
+
+    // Exposed to HomeView. HomeView must check isRefreshStale() before calling.
+    func manualRefresh() async {
+        await runSync()
+    }
+
+    // Returns true when last_price_refresh is more than 1 hour ago (or has never run).
+    // HomeView uses this to decide whether pull-to-refresh should actually fetch.
+    func isRefreshStale() -> Bool {
+        guard let lastStr = DatabaseManager.shared.getSetting(key: "last_price_refresh"),
+              let lastDate = DateHelper.date(from: lastStr) else { return true }
+        return Date().timeIntervalSince(lastDate) > 3600
+    }
+
+    // MARK: - Core sync
+
+    // Full sync cycle: fetch prices → evaluate alerts → record timestamp.
+    private func runSync() async {
+        let postalCode = DatabaseManager.shared.getSetting(key: "user_postal_code") ?? ""
+        guard !postalCode.isEmpty else {
+            print("[BackgroundSyncManager] No postal code set — skipping sync.")
+            return
+        }
+
+        // Build name → itemID map from the user’s tracked list.
+        let items = DatabaseManager.shared.fetchUserItems()
+        var nameMap: [String: Int64] = [:]
+        for item in items {
+            nameMap[item.nameDisplay] = item.itemID
+        }
+
+        do {
+            try await FlippService.shared.fetchPrices(for: nameMap, postalCode: postalCode)
+        } catch FlippFetchError.serviceUnavailable {
+            print("[BackgroundSyncManager] Flipp unavailable — skipping alert evaluation.")
+            return
+        } catch {
+            print("[BackgroundSyncManager] Fetch error: \(error)")
+            return
+        }
+
+        await AlertEngine.shared.evaluateAlerts()
+        DatabaseManager.shared.setSetting(key: "last_price_refresh",
+                                          value: DateHelper.nowString())
     }
 }

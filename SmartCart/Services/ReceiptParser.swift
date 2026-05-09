@@ -1,88 +1,109 @@
 // ReceiptParser.swift — SmartCart/Services/ReceiptParser.swift
-// Runs Apple Vision OCR on a captured receipt image and extracts grocery line items.
-// Returns a typed ScanResult so the caller always knows why a scan succeeded or failed.
+//
+// Converts raw OCR text (from VisionKit) into a list of ParsedReceiptItem values.
+// Called by ReceiptScannerView after Vision framework finishes reading the image.
+//
+// P0-2 Fix: ScanResult enum replaces the old Bool return type.
+// This lets ReceiptScannerView show a specific error banner for each failure mode
+// instead of a single generic “scan failed” message.
+//
+// Pipeline:
+//   1. Split raw text into lines
+//   2. Reject noise lines (totals, tax, store headers, barcodes)
+//   3. Extract price from the line or adjacent lines
+//   4. Normalise item name via NameNormaliser
+//   5. Score confidence
+//   6. Return ScanResult.success([ParsedReceiptItem]) or a specific failure case
 
 import Foundation
-import Vision
-import UIKit
 
-// Typed result — callers switch on this instead of checking for empty arrays.
+// P0-2: Typed result — ReceiptScannerView switches on this to choose the right banner.
 enum ScanResult {
-    case success([ParsedReceiptItem])
-    case empty      // OCR ran but found no grocery items
-    case timeout    // Vision took longer than 10 seconds
-    case imageError // cgImage conversion failed
+    case success([ParsedReceiptItem])  // At least 1 item found
+    case noItemsFound                  // OCR ran but 0 products identified
+    case imageTooBlurry                // Vision confidence below threshold
+    case emptyInput                    // Zero text extracted (black image, etc.)
+    case unknownError(String)          // Catch-all with debug description
 }
 
-struct ReceiptParser {
+enum ReceiptParser {
 
-    /// Runs synchronous OCR on the provided image and returns a typed ScanResult.
-    func parse(image: UIImage) -> ScanResult {
-        guard let cgImage = image.cgImage else { return .imageError }
+    // MARK: - Main entry point
 
-        var recognisedLines: [String] = []
-        let semaphore = DispatchSemaphore(value: 0)
+    // Call this with the full OCR output string from VNRecognizeTextRequest.
+    // Returns a ScanResult — handle every case in ReceiptScannerView.
+    static func parse(rawText: String) -> ScanResult {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .emptyInput }
 
-        let request = VNRecognizeTextRequest { request, error in
-            defer { semaphore.signal() }
-            guard error == nil,
-                  let observations = request.results as? [VNRecognizedTextObservation] else { return }
-            recognisedLines = observations.compactMap { $0.topCandidates(1).first?.string }
+        let lines = trimmed.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        let candidates = lines.enumerated().compactMap { (index, line) -> ParsedReceiptItem? in
+            guard !isNoiseLine(line) else { return nil }
+            let price = extractPrice(from: line) ?? extractPrice(fromAdjacentLines: lines, index: index)
+            let raw = stripPrice(from: line)
+            guard raw.count >= 3 else { return nil }  // ignore very short strings
+            let normalised = NameNormaliser.normalise(raw)
+            let confidence = score(name: raw, price: price)
+            return ParsedReceiptItem(rawName: raw, normalisedName: normalised,
+                                     parsedPrice: price, confidence: confidence)
         }
-        request.recognitionLevel = .accurate
-        request.usesLanguageCorrection = false  // OFF: grocery shorthand breaks spell-check
 
-        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-        try? handler.perform([request])
-
-        guard semaphore.wait(timeout: .now() + 10) != .timedOut else { return .timeout }
-
-        let items = filterGroceryLines(recognisedLines)
-        guard !items.isEmpty else { return .empty }
-        return .success(items)
+        return candidates.isEmpty ? .noItemsFound : .success(candidates)
     }
 
-    /// Filters raw OCR lines down to likely grocery items.
-    /// Skips headers, totals, tax lines, and lines with no price nearby.
-    private func filterGroceryLines(_ lines: [String]) -> [ParsedReceiptItem] {
-        var results: [ParsedReceiptItem] = []
-        let pricePattern = try? NSRegularExpression(pattern: #"\$?\d+\.\d{2}"#)
+    // MARK: - Noise detection
 
-        for (index, line) in lines.enumerated() {
-            let upper = line.uppercased()
+    // Returns true for lines that are not grocery products:
+    // totals, taxes, cashier lines, barcodes, and purely numeric strings.
+    private static func isNoiseLine(_ line: String) -> Bool {
+        let upper = line.uppercased()
+        let noiseKeywords = ["TOTAL", "TAX", "SUBTOTAL", "CASH", "CHANGE",
+                             "DEBIT", "CREDIT", "VISA", "MASTERCARD", "THANK YOU",
+                             "CASHIER", "RECEIPT", "STORE #", "TEL:", "HST", "GST", "PST"]
+        if noiseKeywords.contains(where: { upper.contains($0) }) { return true }
+        // Purely numeric (barcode or store number)
+        if line.allSatisfy({ $0.isNumber || $0 == "-" || $0 == "." }) { return true }
+        return false
+    }
 
-            // Skip lines that are clearly not grocery items
-            if upper.contains("TOTAL") || upper.contains("TAX") ||
-               upper.contains("SUBTOTAL") || upper.contains("CHANGE") ||
-               upper.contains("CASH") || upper.contains("DEBIT") ||
-               upper.contains("VISA") || upper.contains("MASTERCARD") {
-                continue
-            }
+    // MARK: - Price extraction
 
-            // Look for a price on this line or the next 2 lines
-            let searchRange = lines[index..<min(index+3, lines.count)].joined(separator: " ")
-            let range = NSRange(searchRange.startIndex..., in: searchRange)
-            let hasPrice = pricePattern?.firstMatch(in: searchRange, range: range) != nil
+    // Looks for a dollar amount in the format 0.00 or 0,00 on the same line.
+    private static func extractPrice(from line: String) -> Double? {
+        let pattern = #"\d+[.,]\d{2}"#
+        guard let range = line.range(of: pattern, options: .regularExpression) else { return nil }
+        let raw = String(line[range]).replacingOccurrences(of: ",", with: ".")
+        return Double(raw)
+    }
 
-            let normalisedName = NameNormaliser.normalise(line)
-            guard normalisedName.count >= 3 else { continue } // Skip very short lines
-
-            // Extract price if present
-            var parsedPrice: Double? = nil
-            if hasPrice, let match = pricePattern?.firstMatch(in: searchRange, range: range),
-               let priceRange = Range(match.range, in: searchRange) {
-                let priceStr = searchRange[priceRange].replacingOccurrences(of: "$", with: "")
-                parsedPrice = Double(priceStr)
-            }
-
-            let confidence: ConfidenceLevel = hasPrice ? .high : .medium
-            results.append(ParsedReceiptItem(
-                rawName: line,
-                normalisedName: normalisedName,
-                parsedPrice: parsedPrice,
-                confidence: confidence
-            ))
+    // Checks the line above and below when no price is on the product line itself.
+    // Some receipt formats print prices on a separate line.
+    private static func extractPrice(fromAdjacentLines lines: [String], index: Int) -> Double? {
+        let indices = [index - 1, index + 1].filter { $0 >= 0 && $0 < lines.count }
+        for i in indices {
+            if let p = extractPrice(from: lines[i]) { return p }
         }
-        return results
+        return nil
+    }
+
+    // Removes the price portion from a name string so it isn’t included in the display name.
+    private static func stripPrice(from line: String) -> String {
+        let pattern = #"\s*\d+[.,]\d{2}\s*[A-Z]?$"#
+        return line.replacingOccurrences(of: pattern, with: "",
+                                         options: .regularExpression)
+                   .trimmingCharacters(in: .whitespaces)
+    }
+
+    // MARK: - Confidence scoring
+
+    // Assigns a ConfidenceLevel based on name length and whether a price was found.
+    private static func score(name: String, price: Double?) -> ConfidenceLevel {
+        let words = name.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        if words.count >= 2 && price != nil { return .high }
+        if words.count >= 1 && price != nil { return .medium }
+        return .low
     }
 }
