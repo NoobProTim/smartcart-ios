@@ -1,29 +1,57 @@
 // NameNormaliser.swift — SmartCart/Utilities/NameNormaliser.swift
-// Converts raw OCR receipt text into a clean, lowercase key used for deduplication
-// and Flipp search queries.
-// Example: "SALTED BTR 454G" → "salted btr 454g"
+//
+// Converts raw OCR product names into a consistent lowercase key used for:
+//   1. Deduplication in the `items` table (nameNormalised UNIQUE constraint)
+//   2. Flipp API search queries
+//
+// Why normalise? "Oat Milk OATLY 1L", "OATLY OAT MILK 1 L", and "oat milk oatly 1l"
+// are the same product. Without normalisation each receipt scan creates a new item row.
+//
+// Rules applied (in order):
+//   1. Lowercase
+//   2. Remove non-alphanumeric characters except spaces
+//   3. Expand common abbreviations (tbl → tablespoon, etc.)
+//   4. Collapse multiple spaces
+//   5. Trim whitespace
 
 import Foundation
 
 enum NameNormaliser {
 
-    /// Lowercases, strips non-alphanumeric characters (except spaces), collapses whitespace.
-    static func normalise(_ raw: String) -> String {
-        var s = raw.lowercased()
-        s = s.components(separatedBy: .alphanumerics.union(.whitespaces).inverted).joined()
-        s = s.components(separatedBy: .whitespaces).filter { !$0.isEmpty }.joined(separator: " ")
-        return s.trimmingCharacters(in: .whitespaces)
-    }
+    // Maps OCR abbreviations to their full forms.
+    // Expand this list as new receipt formats are encountered.
+    private static let abbreviations: [String: String] = [
+        "tbl":  "tablespoon",
+        "tsp":  "teaspoon",
+        "pkg":  "package",
+        "btl":  "bottle",
+        "org":  "organic",
+        "fz":   "frozen",
+        "chkn": "chicken",
+        "brf":  "beef"
+    ]
 
-    /// Computes a name-match score between a normalised receipt name and a Flipp product name.
-    /// Score = overlapping token count / max token count of either string.
-    /// Returns 0.0–1.0. Use Constants.flippMatchThreshold (0.5) as the minimum acceptable score.
-    static func matchScore(receiptName: String, flippName: String) -> Double {
-        let a = Set(normalise(receiptName).split(separator: " ").map(String.init))
-        let b = Set(normalise(flippName).split(separator: " ").map(String.init))
-        guard !a.isEmpty, !b.isEmpty else { return 0 }
-        let intersection = a.intersection(b).count
-        let maxCount = max(a.count, b.count)
-        return Double(intersection) / Double(maxCount)
+    // Main entry point. Pass the raw OCR string; receive a stable lowercase key.
+    static func normalise(_ raw: String) -> String {
+        var result = raw.lowercased()
+
+        // Remove punctuation and special characters, keep spaces and alphanumerics.
+        result = result
+            .components(separatedBy: CharacterSet.alphanumerics.union(.whitespaces).inverted)
+            .joined(separator: " ")
+
+        // Expand abbreviations (whole-word match only).
+        var words = result.components(separatedBy: .whitespaces)
+        words = words.map { abbreviations[$0] ?? $0 }
+        result = words.joined(separator: " ")
+
+        // Collapse multiple spaces and trim.
+        result = result
+            .components(separatedBy: .whitespaces)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespaces)
+
+        return result
     }
 }
