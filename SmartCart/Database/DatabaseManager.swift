@@ -1,260 +1,294 @@
 // DatabaseManager.swift — SmartCart/Database/DatabaseManager.swift
 //
-// SINGLE GATEWAY for all SQLite reads and writes.
-// Views and ViewModels NEVER write raw SQL — all DB access goes through here.
+// The single point of contact between the app and the local SQLite database.
+// All reads and writes go through this class — no raw SQLite anywhere else.
 //
-// Fixes included:
-//   P0-1: markPurchased() is now atomic — writes purchase_history internally.
-//         HomeViewModel.confirmPurchase() no longer calls insertPurchase() separately.
-//   P1-5: hasAlertFiredForItem(itemID:) added — per-item alert check, not global.
-//   P1-8: insertFlyerSale() uses INSERT OR IGNORE against idx_flyer_unique.
-//
-// Usage:
-//   DatabaseManager.shared.setup()   — call once in SmartCartApp.init()
-//   DatabaseManager.shared.fetchUserItems()
-//   DatabaseManager.shared.markPurchased(itemID:priceAtPurchase:)
+// Uses SQLite.swift (stephencelis/SQLite.swift 0.15.x).
+// Access via DatabaseManager.shared (singleton).
 
 import Foundation
 import SQLite
 
 final class DatabaseManager {
 
-    // Shared singleton — use this everywhere.
+    // Shared instance — the whole app uses one DatabaseManager.
     static let shared = DatabaseManager()
-    private init() {}
 
+    // The live SQLite connection. Opened once on init.
     private var db: Connection!
 
-    // MARK: - Table + column references (SQLite.swift Expression types)
-
-    // stores
-    private let storesTable         = Table("stores")
-    private let storeID             = Expression<Int64>("id")
-    private let storeName           = Expression<String>("name")
-    private let storeFlippID        = Expression<String?>("flipp_id")
-    private let storeIsSelected     = Expression<Int64>("is_selected")
-    private let storeLastSyncedAt   = Expression<String?>("last_synced_at")
-
-    // items
-    private let itemsTable          = Table("items")
-    private let itemID              = Expression<Int64>("id")
-    private let itemNameNormalised  = Expression<String>("name_normalised")
-    private let itemNameDisplay     = Expression<String>("name_display")
-    private let itemCategory        = Expression<String?>("category")
-    private let itemUnit            = Expression<String?>("unit")
-    private let itemCreatedAt       = Expression<String>("created_at")
-
-    // user_items
-    private let userItemsTable              = Table("user_items")
-    private let userItemsID                 = Expression<Int64>("id")
-    private let userItemsItemID             = Expression<Int64>("item_id")
-    private let userItemsLastPurchasedDate  = Expression<String?>("last_purchased_date")
-    private let userItemsLastPurchasedPrice = Expression<Double?>("last_purchased_price")
-    private let userItemsReplenishInferred  = Expression<Int64?>("replenishment_inferred")
-    private let userItemsReplenishOverride  = Expression<Int64?>("replenishment_override")
-    private let userItemsNextRestockDate    = Expression<String?>("next_restock_date")
-
-    // purchase_history
-    private let purchaseHistoryTable = Table("purchase_history")
-    private let purchaseID           = Expression<Int64>("id")
-    private let purchaseItemID       = Expression<Int64>("item_id")
-    private let purchasedAt          = Expression<String>("purchased_at")
-    private let purchasePrice        = Expression<Double?>("price")
-    private let purchaseSource       = Expression<String>("source")
-    private let purchaseStoreID      = Expression<Int64?>("store_id")
-
-    // price_history
-    private let priceHistoryTable = Table("price_history")
-    private let priceHistID       = Expression<Int64>("id")
-    private let priceHistItemID   = Expression<Int64>("item_id")
-    private let priceHistStoreID  = Expression<Int64>("store_id")
-    private let priceHistPrice    = Expression<Double>("price")
-    private let priceHistObsAt    = Expression<String>("observed_at")
-    private let priceHistSource   = Expression<String>("source")
-
-    // flyer_sales
-    private let flyerSalesTable  = Table("flyer_sales")
-    private let flyerID          = Expression<Int64>("id")
-    private let flyerItemID      = Expression<Int64>("item_id")
-    private let flyerStoreID     = Expression<Int64>("store_id")
-    private let flyerSalePrice   = Expression<Double>("sale_price")
-    private let flyerStartDate   = Expression<String>("sale_start_date")
-    private let flyerEndDate     = Expression<String?>("sale_end_date")
-    private let flyerSource      = Expression<String>("source")
-    private let flyerFetchedAt   = Expression<String>("fetched_at")
-
-    // alert_log
-    private let alertLogTable      = Table("alert_log")
-    private let alertLogID         = Expression<Int64>("id")
-    private let alertItemID        = Expression<Int64>("item_id")
-    private let alertType          = Expression<String>("alert_type")
-    private let alertTriggerPrice  = Expression<Double>("trigger_price")
-    private let alertFiredAt       = Expression<String>("fired_at")
-    private let alertNotifID       = Expression<String?>("notification_id")
-
-    // user_settings
-    private let settingsTable = Table("user_settings")
-    private let settingKey    = Expression<String>("key")
-    private let settingValue  = Expression<String>("value")
-
-    // MARK: - Setup
-
-    // Call once at app launch in SmartCartApp.init().
-    // Creates all tables and seeds default settings if missing.
-    func setup() {
+    private init() {
         do {
-            let path = NSSearchPathForDirectoriesInDomains(.documentDirectory, .userDomainMask, true).first!
-            db = try Connection("\(path)/smartcart.sqlite3")
-            db.busyTimeout = 5
-            try db.execute("PRAGMA foreign_keys = ON")
-            try runMigrations()
-            seedDefaultSettings()
-        } catch {
-            fatalError("[DatabaseManager] setup() failed: \(error)")
-        }
-    }
-
-    // Creates all tables in Schema.allCreateStatements order.
-    // Safe to call on every launch — all statements use IF NOT EXISTS.
-    private func runMigrations() throws {
-        for statement in Schema.allCreateStatements {
-            try db.execute(statement)
-        }
-    }
-
-    // Inserts default settings rows only if the key does not already exist.
-    private func seedDefaultSettings() {
-        for setting in Schema.defaultSettings {
-            let insert = settingsTable.insert(or: .ignore,
-                settingKey   <- setting.key,
-                settingValue <- setting.value
+            // Store the database file in the app's Documents directory so it
+            // persists across launches and is included in iCloud backups.
+            let docURL = try FileManager.default.url(
+                for: .documentDirectory,
+                in: .userDomainMask,
+                appropriateFor: nil,
+                create: true
             )
-            try? db.run(insert)
+            let dbURL = docURL.appendingPathComponent("smartcart.sqlite3")
+            db = try Connection(dbURL.path)
+            // Enable WAL mode: faster writes, safer concurrent reads.
+            try db.execute("PRAGMA journal_mode = WAL")
+            // Enforce foreign key constraints.
+            try db.execute("PRAGMA foreign_keys = ON")
+            runMigrations()
+        } catch {
+            fatalError("[DatabaseManager] Failed to open SQLite: \(error)")
         }
     }
 
-    // MARK: - Settings
+    // MARK: - Migrations
 
+    // Creates all tables and indexes if they don't exist.
+    // Safe to call on every launch — uses IF NOT EXISTS everywhere.
+    func runMigrations() {
+        do {
+            // stores
+            try db.run(storesTable.create(ifNotExists: true) { t in
+                t.column(storeID, primaryKey: .autoincrement)
+                t.column(storeName)
+                t.column(storeLogoURL)
+                t.column(storeFlippID)
+                t.column(storeIsSelected, defaultValue: 0)
+                t.column(storeLastSynced)
+            })
+
+            // items
+            try db.run(itemsTable.create(ifNotExists: true) { t in
+                t.column(itemID, primaryKey: .autoincrement)
+                t.column(itemNameNormalised, unique: true)
+                t.column(itemNameDisplay)
+                t.column(itemCategory)
+                t.column(itemUnit)
+                t.column(itemCreatedAt)
+            })
+            try db.execute("CREATE INDEX IF NOT EXISTS idx_items_name ON items(name_normalised)")
+
+            // user_items
+            try db.run(userItemsTable.create(ifNotExists: true) { t in
+                t.column(userItemID, primaryKey: .autoincrement)
+                t.column(userItemsItemID, references: itemsTable, itemID)
+                t.column(userItemsAddedDate)
+                t.column(userItemsLastPurchasedDate)
+                t.column(userItemsLastPurchasedPrice)
+                t.column(userItemsLastStoreID)
+                t.column(userItemsReplenishInferred)
+                t.column(userItemsReplenishOverride)
+                t.column(userItemsNextRestockDate)
+                t.column(userItemsIsActive, defaultValue: 1)
+            })
+            try db.execute("CREATE INDEX IF NOT EXISTS idx_user_items_item ON user_items(item_id)")
+
+            // purchase_history
+            try db.run(purchaseHistoryTable.create(ifNotExists: true) { t in
+                t.column(purchaseID, primaryKey: .autoincrement)
+                t.column(purchaseItemID, references: itemsTable, itemID)
+                t.column(purchaseStoreID)
+                t.column(purchasePrice)
+                t.column(purchasedAt)
+                t.column(purchaseSource)
+            })
+            try db.execute("CREATE INDEX IF NOT EXISTS idx_purchase_item ON purchase_history(item_id, purchased_at)")
+
+            // price_history
+            try db.run(priceHistoryTable.create(ifNotExists: true) { t in
+                t.column(priceHistID, primaryKey: .autoincrement)
+                t.column(priceHistItemID, references: itemsTable, itemID)
+                t.column(priceHistStoreID, references: storesTable, storeID)
+                t.column(priceHistPrice)
+                t.column(priceHistDate)
+                t.column(priceHistSource)
+            })
+            try db.execute("CREATE INDEX IF NOT EXISTS idx_price_item_store ON price_history(item_id, store_id, observed_at)")
+
+            // flyer_sales
+            try db.run(flyerSalesTable.create(ifNotExists: true) { t in
+                t.column(flyerID, primaryKey: .autoincrement)
+                t.column(flyerItemID, references: itemsTable, itemID)
+                t.column(flyerStoreID, references: storesTable, storeID)
+                t.column(flyerSalePrice)
+                t.column(flyerRegularPrice)
+                t.column(flyerStartDate)
+                t.column(flyerEndDate)
+                t.column(flyerSource)
+                t.column(flyerFetchedAt)
+            })
+            try db.execute("CREATE INDEX IF NOT EXISTS idx_flyer_item_store ON flyer_sales(item_id, store_id, sale_start_date)")
+            try db.execute("CREATE INDEX IF NOT EXISTS idx_flyer_end_date ON flyer_sales(sale_end_date)")
+            // Fix P1-8: unique index prevents duplicate rows on every daily sync.
+            try db.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_flyer_unique
+                ON flyer_sales(item_id, store_id, sale_start_date, sale_price)
+            """)
+
+            // alert_log
+            try db.run(alertLogTable.create(ifNotExists: true) { t in
+                t.column(alertID, primaryKey: .autoincrement)
+                t.column(alertItemID, references: itemsTable, itemID)
+                t.column(alertStoreID, references: storesTable, storeID)
+                t.column(alertType)
+                t.column(alertPrice)
+                t.column(alertFiredAt)
+                t.column(alertSaleEventID)
+                t.column(alertNotifID)
+            })
+            try db.execute("CREATE INDEX IF NOT EXISTS idx_alert_item_type ON alert_log(item_id, alert_type, fired_at)")
+            try db.execute("CREATE INDEX IF NOT EXISTS idx_alert_sale_event ON alert_log(sale_event_id)")
+
+            // user_stores
+            try db.run(userStoresTable.create(ifNotExists: true) { t in
+                t.column(Expression<Int64>("store_id"), primaryKey: true)
+                t.foreignKey(Expression<Int64>("store_id"), references: storesTable, storeID)
+                t.column(Expression<Int64>("selected"), defaultValue: 1)
+            })
+
+            // user_settings
+            try db.run(userSettingsTable.create(ifNotExists: true) { t in
+                t.column(settingKey, primaryKey: true)
+                t.column(settingValue)
+            })
+
+            seedDefaultSettings()
+
+        } catch {
+            print("[DatabaseManager] Migration error: \(error)")
+        }
+    }
+
+    // Inserts default user_settings rows if they don't already exist.
+    private func seedDefaultSettings() {
+        for (key, value) in defaultSettings {
+            let row = userSettingsTable.filter(settingKey == key)
+            if (try? db.scalar(row.count)) == 0 {
+                try? db.run(userSettingsTable.insert(settingKey <- key, settingValue <- value))
+            }
+        }
+    }
+
+    // MARK: - Settings helpers
+
+    // Reads a value from user_settings by key. Returns nil if the key doesn't exist.
     func getSetting(key: String) -> String? {
-        let row = settingsTable.filter(settingKey == key)
-        return (try? db.pluck(row))?[settingValue]
+        let row = userSettingsTable.filter(settingKey == key)
+        return try? db.pluck(row).flatMap { $0[settingValue] }
     }
 
-    func setSetting(key: String, value: String) {
-        let upsert = settingsTable.insert(or: .replace,
-            settingKey   <- key,
-            settingValue <- value
-        )
-        try? db.run(upsert)
+    // Writes or replaces a value in user_settings.
+    func setSetting(key: String, value: String?) {
+        try? db.run(userSettingsTable.insert(or: .replace,
+            settingKey <- key, settingValue <- value))
     }
 
+    // Deletes a key from user_settings entirely.
     func deleteSetting(key: String) {
-        let row = settingsTable.filter(settingKey == key)
-        try? db.run(row.delete())
+        try? db.run(userSettingsTable.filter(settingKey == key).delete())
     }
 
-    // MARK: - Stores
+    // MARK: - Store helpers
 
-    // Inserts a new store or returns the existing store’s id if name already exists.
+    // Inserts a store by name if it doesn't already exist, then returns its ID.
+    // Safe to call multiple times with the same name.
     @discardableResult
     func upsertStore(name: String) -> Int64 {
         if let existing = try? db.pluck(storesTable.filter(storeName == name)) {
             return existing[storeID]
         }
-        let insert = storesTable.insert(
-            storeName       <- name,
+        let id = try? db.run(storesTable.insert(
+            storeName <- name,
             storeIsSelected <- 1
-        )
-        return (try? db.run(insert)) ?? -1
+        ))
+        return id ?? 0
     }
 
-    // Returns all stores where is_selected = 1.
+    // Returns all stores that the user has selected (is_selected = 1).
     func fetchSelectedStores() -> [Store] {
-        let query = storesTable.filter(storeIsSelected == 1)
-        return (try? db.prepare(query).map { row in
+        let rows = (try? db.prepare(storesTable.filter(storeIsSelected == 1))) ?? AnySequence([])
+        return rows.map { row in
             Store(
                 id: row[storeID],
                 name: row[storeName],
                 flippID: row[storeFlippID],
                 isSelected: row[storeIsSelected] == 1,
-                lastSyncedAt: row[storeLastSyncedAt].flatMap { DateHelper.date(from: $0) }
+                lastSyncedAt: row[storeLastSynced]
             )
-        }) ?? []
+        }
     }
 
-    // MARK: - Items
+    // MARK: - Item helpers
 
-    // Inserts item if nameNormalised is new; returns existing id if already present.
-    // Also inserts a user_items row if one does not exist for this item.
+    // Inserts or updates an item by normalised name.
+    // Returns the item's database ID.
     @discardableResult
-    func upsertItem(nameDisplay: String, nameNormalised: String) -> Int64 {
+    func upsertItem(nameNormalised: String, nameDisplay: String) -> Int64 {
         if let existing = try? db.pluck(itemsTable.filter(itemNameNormalised == nameNormalised)) {
             return existing[itemID]
         }
-        let insert = itemsTable.insert(
+        let id = try? db.run(itemsTable.insert(
             itemNameNormalised <- nameNormalised,
-            itemNameDisplay    <- nameDisplay,
-            itemCreatedAt      <- DateHelper.nowString()
-        )
-        guard let newID = try? db.run(insert) else { return -1 }
-        let userInsert = userItemsTable.insert(
-            userItemsItemID <- newID
-        )
-        try? db.run(userInsert)
-        return newID
+            itemNameDisplay <- nameDisplay,
+            itemCreatedAt <- Date()
+        ))
+        return id ?? 0
     }
 
-    // MARK: - User Items
-
-    // Row returned from a joined query across user_items + items.
-    struct UserItemRow {
-        let itemID: Int64
-        let nameDisplay: String
-        let lastPurchasedDate: String?
-        let lastPurchasedPrice: Double?
-        let replenishmentInferred: Int64?
-        let replenishmentOverride: Int64?
-        let nextRestockDate: String?
+    // Ensures a user_items row exists for the given item.
+    func upsertUserItem(itemIDValue: Int64) {
+        let existing = userItemsTable.filter(userItemsItemID == itemIDValue)
+        if (try? db.scalar(existing.count)) == 0 {
+            try? db.run(userItemsTable.insert(
+                userItemsItemID <- itemIDValue,
+                userItemsAddedDate <- Date(),
+                userItemsIsActive <- 1
+            ))
+        }
     }
 
-    // Fetches all user_items joined with items, ordered by next_restock_date ASC.
-    func fetchUserItems() -> [UserItemRow] {
+    // Returns all active user items, sorted by next restock date ascending.
+    func fetchUserItems() -> [UserItem] {
         let query = userItemsTable
             .join(itemsTable, on: userItemsItemID == itemID)
-            .order(userItemsNextRestockDate.asc)
-        return (try? db.prepare(query).map { row in
-            UserItemRow(
-                itemID:                row[userItemsItemID],
-                nameDisplay:           row[itemNameDisplay],
-                lastPurchasedDate:     row[userItemsLastPurchasedDate],
-                lastPurchasedPrice:    row[userItemsLastPurchasedPrice],
-                replenishmentInferred: row[userItemsReplenishInferred],
-                replenishmentOverride: row[userItemsReplenishOverride],
-                nextRestockDate:       row[userItemsNextRestockDate]
+            .filter(userItemsIsActive == 1)
+        let rows = (try? db.prepare(query)) ?? AnySequence([])
+        return rows.map { row in
+            UserItem(
+                id: row[userItemID],
+                itemID: row[userItemsItemID],
+                nameDisplay: row[itemNameDisplay],
+                lastPurchasedDate: row[userItemsLastPurchasedDate],
+                lastPurchasedPrice: row[userItemsLastPurchasedPrice],
+                inferredCycleDays: row[userItemsReplenishInferred].map { Int($0) },
+                userOverrideCycleDays: row[userItemsReplenishOverride].map { Int($0) },
+                nextRestockDate: row[userItemsNextRestockDate],
+                // Fix P1-5: per-item alert check, not global count.
+                hasActiveAlert: hasAlertFiredForItem(itemID: row[userItemsItemID])
             )
-        }) ?? []
+        }
     }
 
-    // MARK: - Purchase History
+    // MARK: - Purchase helpers
 
-    // P0-1 Fix: markPurchased() is now atomic.
-    // Writes purchase_history AND updates user_items in a single transaction.
-    // Call this exclusively — never call insertPurchase() separately.
+    // Fix P0-1: markPurchased() is now atomic.
+    // It writes purchase_history AND updates user_items in a single transaction.
+    // Do NOT call insertPurchase() separately after this — that would create a duplicate row.
     func markPurchased(itemID: Int64, priceAtPurchase: Double?) {
-        let today = DateHelper.nowString()
+        let today = Date()
         do {
             try db.transaction {
+                // Update the user_items row with today's purchase date.
                 let userItem = userItemsTable.filter(userItemsItemID == itemID)
                 try db.run(userItem.update(
-                    userItemsLastPurchasedDate  <- today,
+                    userItemsLastPurchasedDate <- today,
                     userItemsLastPurchasedPrice <- priceAtPurchase,
-                    userItemsNextRestockDate    <- nil
+                    userItemsNextRestockDate <- nil  // Reset; recalculated below.
                 ))
+                // Write a purchase_history row so replenishment logic has data.
                 try db.run(purchaseHistoryTable.insert(
                     purchaseItemID <- itemID,
-                    purchasedAt    <- today,
-                    purchasePrice  <- priceAtPurchase,
-                    purchaseSource <- "receipt"
+                    purchasedAt <- today,
+                    purchasePrice <- priceAtPurchase,
+                    purchaseSource <- "manual"
                 ))
             }
             recalculateReplenishment(itemID: itemID)
@@ -263,82 +297,61 @@ final class DatabaseManager {
         }
     }
 
-    // Recalculates the median purchase interval and updates next_restock_date.
-    // Called automatically by markPurchased().
-    private func recalculateReplenishment(itemID: Int64) {
-        let history = purchaseHistoryTable
-            .filter(purchaseItemID == itemID)
-            .order(purchasedAt.asc)
-        guard let rows = try? db.prepare(history).map({ $0[purchasedAt] }),
-              rows.count >= 2 else { return }
+    // Recalculates the inferred replenishment cycle for an item
+    // using the median interval between its purchase_history rows.
+    // Also updates next_restock_date on user_items.
+    func recalculateReplenishment(itemID: Int64) {
+        let rows = (try? db.prepare(
+            purchaseHistoryTable
+                .filter(purchaseItemID == itemID)
+                .order(purchasedAt.asc)
+        )) ?? AnySequence([])
 
-        let dates = rows.compactMap { DateHelper.date(from: $0) }
+        let dates = rows.compactMap { $0[purchasedAt] as Date? }
+        guard dates.count >= 2 else { return }
+
+        // Calculate day-intervals between consecutive purchases.
         var intervals: [Int] = []
         for i in 1..<dates.count {
-            let days = Calendar.current.dateComponents([.day], from: dates[i-1], to: dates[i]).day ?? 0
+            let days = Calendar.current.dateComponents([.day], from: dates[i - 1], to: dates[i]).day ?? 0
             if days > 0 { intervals.append(days) }
         }
         guard !intervals.isEmpty else { return }
 
-        // TODO: use true median for even-count arrays (P2-1)
         let sorted = intervals.sorted()
+        // TODO: use true median for even counts: (sorted[n/2-1] + sorted[n/2]) / 2 — P2-1
         let median = sorted[sorted.count / 2]
 
-        let nextRestock = Calendar.current.date(byAdding: .day, value: median, to: dates.last!)!
-        let nextRestockStr = DateHelper.string(from: nextRestock)
+        let lastPurchased = dates.last!
+        let nextRestock = Calendar.current.date(byAdding: .day, value: median, to: lastPurchased)
 
-        let userItem = userItemsTable.filter(userItemsItemID == itemID)
-        try? db.run(userItem.update(
-            userItemsReplenishInferred <- Int64(median),
-            userItemsNextRestockDate   <- nextRestockStr
-        ))
-    }
-
-    // MARK: - Price History
-
-    func insertPriceHistory(itemID: Int64, storeID: Int64, price: Double, source: String = "flipp") {
-        let insert = priceHistoryTable.insert(
-            priceHistItemID  <- itemID,
-            priceHistStoreID <- storeID,
-            priceHistPrice   <- price,
-            priceHistObsAt   <- DateHelper.nowString(),
-            priceHistSource  <- source
+        try? db.run(
+            userItemsTable.filter(userItemsItemID == itemID).update(
+                userItemsReplenishInferred <- Int64(median),
+                userItemsNextRestockDate <- nextRestock
+            )
         )
-        try? db.run(insert)
     }
 
-    // Returns the 90-day rolling average price for an item across all selected stores.
-    func rollingAverage90(itemID: Int64) -> Double? {
-        let cutoff = DateHelper.string(from: Calendar.current.date(byAdding: .day, value: -90, to: Date())!)
-        let query = priceHistoryTable
-            .filter(priceHistItemID == itemID && priceHistObsAt >= cutoff)
-            .select(priceHistPrice.average)
-        return (try? db.scalar(query)) ?? nil
-    }
-
-    // Returns the all-time lowest recorded regular price for an item.
-    func historicalLow(itemID: Int64) -> Double? {
-        let query = priceHistoryTable
-            .filter(priceHistItemID == itemID)
-            .select(priceHistPrice.min)
-        return (try? db.scalar(query)) ?? nil
-    }
-
-    // Returns the current lowest price from price_history (most recent observation).
+    // Returns the current lowest price for an item across all selected stores.
+    // Used by HomeViewModel when recording the price at time of purchase.
     func currentLowestPrice(for itemID: Int64) -> Double? {
-        let query = priceHistoryTable
-            .filter(priceHistItemID == itemID)
-            .order(priceHistObsAt.desc)
-            .limit(1)
-            .select(priceHistPrice)
-        return (try? db.pluck(query))?[priceHistPrice]
+        let sevenDaysAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
+        let row = try? db.pluck(
+            priceHistoryTable
+                .filter(priceHistItemID == itemID && priceHistDate >= sevenDaysAgo)
+                .order(priceHistPrice.asc)
+        )
+        return row?[priceHistPrice]
     }
 
-    // MARK: - Flyer Sales
+    // MARK: - Flyer sale helpers
 
-    // P1-8 Fix: INSERT OR IGNORE against idx_flyer_unique prevents duplicate rows.
+    // Fix P1-8: INSERT OR IGNORE — unique index on (item_id, store_id, sale_start_date, sale_price)
+    // prevents duplicate rows from accumulating on every daily sync.
+    // On an existing row: only fetched_at is refreshed.
     func insertFlyerSale(itemID: Int64, storeID: Int64, salePrice: Double,
-                         startDate: String, endDate: String?, source: String = "flipp") {
+                         startDate: Date, endDate: Date?, source: String) {
         let insert = flyerSalesTable.insert(or: .ignore,
             flyerItemID    <- itemID,
             flyerStoreID   <- storeID,
@@ -346,65 +359,91 @@ final class DatabaseManager {
             flyerStartDate <- startDate,
             flyerEndDate   <- endDate,
             flyerSource    <- source,
-            flyerFetchedAt <- DateHelper.nowString()
+            flyerFetchedAt <- Date()
         )
         try? db.run(insert)
-        // Update fetched_at on the existing row so we know it was seen today
+        // Refresh fetched_at on the existing row (ignore fires on duplicate).
         let existing = flyerSalesTable.filter(
             flyerItemID == itemID && flyerStoreID == storeID &&
             flyerStartDate == startDate && flyerSalePrice == salePrice
         )
-        try? db.run(existing.update(flyerFetchedAt <- DateHelper.nowString()))
+        try? db.run(existing.update(flyerFetchedAt <- Date()))
     }
 
-    // Returns all active flyer sales for a given item (today is within [start, end]).
-    func fetchActiveSales(itemID: Int64) -> [FlyerSale] {
-        let today = DateHelper.todayString()
+    // Returns all flyer sales currently active today for a given item.
+    func fetchActiveSales(for itemID: Int64) -> [FlyerSale] {
+        let today = Date()
         let query = flyerSalesTable.filter(
             flyerItemID == itemID &&
-            flyerStartDate <= today &&
-            (flyerEndDate == nil || flyerEndDate >= today)
+            flyerStartDate <= today
         )
-        return (try? db.prepare(query).map { row in
-            FlyerSale(
-                id:        row[flyerID],
-                itemID:    row[flyerItemID],
-                storeID:   row[flyerStoreID],
+        let rows = (try? db.prepare(query)) ?? AnySequence([])
+        return rows.compactMap { row in
+            let end = row[flyerEndDate]
+            if let end = end, end < today { return nil }  // expired
+            return FlyerSale(
+                id: row[flyerID],
+                itemID: row[flyerItemID],
+                storeID: row[flyerStoreID],
                 salePrice: row[flyerSalePrice],
-                validFrom: DateHelper.date(from: row[flyerStartDate]) ?? Date(),
-                validTo:   row[flyerEndDate].flatMap { DateHelper.date(from: $0) },
-                source:    row[flyerSource],
-                fetchedAt: DateHelper.date(from: row[flyerFetchedAt]) ?? Date()
+                validFrom: row[flyerStartDate],
+                validTo: row[flyerEndDate],
+                source: row[flyerSource],
+                fetchedAt: row[flyerFetchedAt]
             )
-        }) ?? []
+        }
     }
 
-    // MARK: - Alert Log
+    // MARK: - Alert log helpers
 
-    // Counts alerts fired today across ALL items (used for daily cap check).
-    func alertsFiredToday() -> Int {
-        let startOfToday = DateHelper.todayString()
-        return (try? db.scalar(alertLogTable.filter(alertFiredAt >= startOfToday).count)) ?? 0
-    }
-
-    // P1-5 Fix: Per-item alert check. Returns true if any alert fired for this item today.
+    // Fix P1-5: per-item check, not a global count.
+    // Returns true when at least one alert for this specific item fired today.
     func hasAlertFiredForItem(itemID: Int64) -> Bool {
-        let startOfToday = DateHelper.todayString()
+        let startOfToday = Calendar.current.startOfDay(for: Date())
         let count = (try? db.scalar(
             alertLogTable.filter(alertItemID == itemID && alertFiredAt >= startOfToday).count
         )) ?? 0
         return count > 0
     }
 
-    // Writes an alert_log row. Call this BEFORE scheduling the UNNotification.
-    func logAlert(itemID: Int64, alertType: String, triggerPrice: Double, notificationID: String?) {
-        let insert = alertLogTable.insert(
-            alertItemID      <- itemID,
-            alertType        <- alertType,
-            alertTriggerPrice <- triggerPrice,
-            alertFiredAt     <- DateHelper.nowString(),
-            alertNotifID     <- notificationID
-        )
-        try? db.run(insert)
+    // Returns how many alerts (any type, any item) have fired today.
+    // Used by AlertEngine to enforce the 3-alert daily cap.
+    func alertsFiredToday() -> Int {
+        let startOfToday = Calendar.current.startOfDay(for: Date())
+        return (try? db.scalar(
+            alertLogTable.filter(alertFiredAt >= startOfToday).count
+        )) ?? 0
+    }
+
+    // Writes a new alert_log row. Call this BEFORE firing the UNUserNotificationCenter
+    // request — that way cap + dedup work correctly even if permission is denied.
+    func logAlert(itemID: Int64, storeID: Int64, type: String,
+                  price: Double, saleEventID: Int64?, notificationID: String?) {
+        try? db.run(alertLogTable.insert(
+            alertItemID     <- itemID,
+            alertStoreID    <- storeID,
+            alertType       <- type,
+            alertPrice      <- price,
+            alertFiredAt    <- Date(),
+            alertSaleEventID <- saleEventID,
+            alertNotifID    <- notificationID
+        ))
+    }
+
+    // MARK: - Data hygiene
+
+    // Deletes old flyer_sales and alert_log rows to keep the DB small.
+    // Call after each daily Flipp sync (BackgroundSyncManager).
+    func runDataHygiene() {
+        // Remove flyer sales that expired more than 30 days ago.
+        try? db.execute("""
+            DELETE FROM flyer_sales
+            WHERE sale_end_date < date('now', '-30 days')
+        """)
+        // Remove alert log entries older than 60 days.
+        try? db.execute("""
+            DELETE FROM alert_log
+            WHERE fired_at < date('now', '-60 days')
+        """)
     }
 }
