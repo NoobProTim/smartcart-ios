@@ -1,4 +1,5 @@
 // DatabaseManager+Fixes.swift
+// Task #1 P1-E fixes + Task #2 DB helpers for ReplenishmentEngine.
 import Foundation
 import SQLite
 
@@ -74,22 +75,46 @@ extension DatabaseManager {
         try? db.run(
             userItemsTable
                 .filter(userItemsItemID == itemID)
-                .update(userItemsIsSeasonal <- isSeasonal)
+                .update(userItemsIsSeasonal <- (isSeasonal ? 1 : 0))
         )
     }
 
-    // MARK: - Per-item alert check
-    func hasAlertFiredForItem(itemID: Int64) -> Bool {
-        let startOfToday = Calendar.current.startOfDay(for: Date())
-        let count = (try? db.scalar(
-            alertLogTable.filter(alertItemID == itemID && alertFiredAt >= startOfToday).count
-        )) ?? 0
-        return count > 0
+    // MARK: - ReplenishmentEngine helpers (Task #2)
+
+    /// Fetches a single UserItem by its item_id.
+    /// Used by ReplenishmentEngine to read cycle + seasonal data without
+    /// loading the entire list. Returns nil if the item doesn't exist.
+    func fetchUserItem(itemID: Int64) -> UserItem? {
+        let query = userItemsTable
+            .join(itemsTable, on: userItemsItemID == self.itemID)
+            .filter(userItemsItemID == itemID)
+            .limit(1)
+        guard let row = try? db.pluck(query) else { return nil }
+        return UserItem(
+            id: row[userItemID],
+            itemID: row[userItemsItemID],
+            nameDisplay: row[itemNameDisplay],
+            lastPurchasedDate: row[userItemsLastPurchasedDate],
+            lastPurchasedPrice: row[userItemsLastPurchasedPrice],
+            inferredCycleDays: row[userItemsReplenishInferred].map { Int($0) },
+            userOverrideCycleDays: row[userItemsReplenishOverride].map { Int($0) },
+            nextRestockDate: row[userItemsNextRestockDate],
+            hasActiveAlert: hasAlertFiredForItem(itemID: itemID),
+            isSeasonal: (row[userItemsIsSeasonal] ?? 0) == 1
+        )
+    }
+
+    /// Directly sets the next_restock_date for an item.
+    /// Called by ReplenishmentEngine after quantity-scaling a bulk purchase.
+    func setNextRestockDate(itemID: Int64, date: Date?) {
+        try? db.run(
+            userItemsTable
+                .filter(userItemsItemID == itemID)
+                .update(userItemsNextRestockDate <- date)
+        )
     }
 
     // MARK: - P1-G: Race-condition-safe flyer sale upsert
-    // Replaces the previous INSERT OR IGNORE + UPDATE two-step.
-    // Uses a single SQLite 3.24+ ON CONFLICT upsert — no race window.
     func insertFlyerSale(itemID: Int64, storeID: Int64, salePrice: Double,
                          startDate: Date, endDate: Date?, source: String) {
         let sql = """
@@ -115,11 +140,40 @@ extension DatabaseManager {
         )
     }
 
+    /// Returns the median purchase cycle in days for an item.
+    /// Kept private — external callers use fetchUserItem() to get effectiveCycleDays.
+    func fetchCycleDays(for itemID: Int64) -> Int? {
+        let rows = (try? db.prepare(
+            purchaseHistoryTable
+                .filter(purchaseItemID == itemID)
+                .order(purchasedAt.asc)
+        )) ?? AnySequence([])
+        let dates = rows.compactMap { $0[purchasedAt] as Date? }
+        guard dates.count >= 2 else { return nil }
+        var intervals: [Int] = []
+        for i in 1 ..< dates.count {
+            let days = Calendar.current.dateComponents([.day], from: dates[i - 1], to: dates[i]).day ?? 0
+            if days > 0 { intervals.append(days) }
+        }
+        guard !intervals.isEmpty else { return nil }
+        let sorted = intervals.sorted()
+        return sorted[sorted.count / 2]
+    }
+
     // Migration helper — call inside runMigrations().
     func applyFlyerSalesUniqueIndex() {
         try? db.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_flyer_unique
             ON flyer_sales(item_id, store_id, sale_start_date)
         """)
+    }
+
+    // MARK: - Per-item alert check
+    func hasAlertFiredForItem(itemID: Int64) -> Bool {
+        let startOfToday = Calendar.current.startOfDay(for: Date())
+        let count = (try? db.scalar(
+            alertLogTable.filter(alertItemID == itemID && alertFiredAt >= startOfToday).count
+        )) ?? 0
+        return count > 0
     }
 }
