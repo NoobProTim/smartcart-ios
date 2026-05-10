@@ -39,16 +39,19 @@ let itemUnit           = Expression<String?>("unit")
 let itemCreatedAt      = Expression<Date>("created_at")
 
 // MARK: - user_items columns
-let userItemID                 = Expression<Int64>("id")
-let userItemsItemID            = Expression<Int64>("item_id")
-let userItemsAddedDate         = Expression<Date>("added_date")
-let userItemsLastPurchasedDate = Expression<Date?>("last_purchased_date")
+let userItemID                  = Expression<Int64>("id")
+let userItemsItemID             = Expression<Int64>("item_id")
+let userItemsAddedDate          = Expression<Date>("added_date")
+let userItemsLastPurchasedDate  = Expression<Date?>("last_purchased_date")
 let userItemsLastPurchasedPrice = Expression<Double?>("last_purchased_price")
-let userItemsLastStoreID       = Expression<Int64?>("last_purchased_store_id")
-let userItemsReplenishInferred = Expression<Int64?>("replenishment_inferred")
-let userItemsReplenishOverride = Expression<Int64?>("replenishment_override")
-let userItemsNextRestockDate   = Expression<Date?>("next_restock_date")
-let userItemsIsActive          = Expression<Int64>("is_active")
+let userItemsLastStoreID        = Expression<Int64?>("last_purchased_store_id")
+let userItemsReplenishInferred  = Expression<Int64?>("replenishment_inferred")
+let userItemsReplenishOverride  = Expression<Int64?>("replenishment_override")
+let userItemsNextRestockDate    = Expression<Date?>("next_restock_date")
+let userItemsIsActive           = Expression<Int64>("is_active")
+/// 0 = normal, 1 = irregular purchase pattern — suppresses restock alerts.
+/// Added in migration M2. Use applyM2Migration() in runMigrations().
+let userItemsIsSeasonal         = Expression<Int64?>("is_seasonal")
 
 // MARK: - purchase_history columns
 let purchaseID     = Expression<Int64>("id")
@@ -57,6 +60,9 @@ let purchaseStoreID = Expression<Int64?>("store_id")
 let purchasePrice  = Expression<Double?>("price")
 let purchasedAt    = Expression<Date>("purchased_at")
 let purchaseSource = Expression<String>("source")
+/// Number of units bought in one purchase. Added in migration M2.
+/// Defaults to 1. ReplenishmentEngine scales the restock clock by this value.
+let purchaseQty    = Expression<Int64>("qty")
 
 // MARK: - price_history columns
 let priceHistID       = Expression<Int64>("id")

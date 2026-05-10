@@ -5,22 +5,20 @@
 //
 // Uses SQLite.swift (stephencelis/SQLite.swift 0.15.x).
 // Access via DatabaseManager.shared (singleton).
+//
+// Mutation methods (markPurchased, recalculateReplenishment) live in
+// DatabaseManager+Fixes.swift — they own the quantity-aware, atomic versions.
 
 import Foundation
 import SQLite
 
 final class DatabaseManager {
 
-    // Shared instance — the whole app uses one DatabaseManager.
     static let shared = DatabaseManager()
-
-    // The live SQLite connection. Opened once on init.
-    private var db: Connection!
+    var db: Connection!   // internal so +Fixes extensions can reach it
 
     private init() {
         do {
-            // Store the database file in the app's Documents directory so it
-            // persists across launches and is included in iCloud backups.
             let docURL = try FileManager.default.url(
                 for: .documentDirectory,
                 in: .userDomainMask,
@@ -29,9 +27,7 @@ final class DatabaseManager {
             )
             let dbURL = docURL.appendingPathComponent("smartcart.sqlite3")
             db = try Connection(dbURL.path)
-            // Enable WAL mode: faster writes, safer concurrent reads.
             try db.execute("PRAGMA journal_mode = WAL")
-            // Enforce foreign key constraints.
             try db.execute("PRAGMA foreign_keys = ON")
             runMigrations()
         } catch {
@@ -41,8 +37,6 @@ final class DatabaseManager {
 
     // MARK: - Migrations
 
-    // Creates all tables and indexes if they don't exist.
-    // Safe to call on every launch — uses IF NOT EXISTS everywhere.
     func runMigrations() {
         do {
             // stores
@@ -66,7 +60,7 @@ final class DatabaseManager {
             })
             try db.execute("CREATE INDEX IF NOT EXISTS idx_items_name ON items(name_normalised)")
 
-            // user_items
+            // user_items (M1 schema)
             try db.run(userItemsTable.create(ifNotExists: true) { t in
                 t.column(userItemID, primaryKey: .autoincrement)
                 t.column(userItemsItemID, references: itemsTable, itemID)
@@ -81,14 +75,14 @@ final class DatabaseManager {
             })
             try db.execute("CREATE INDEX IF NOT EXISTS idx_user_items_item ON user_items(item_id)")
 
-            // purchase_history
+            // purchase_history (M1 schema)
             try db.run(purchaseHistoryTable.create(ifNotExists: true) { t in
                 t.column(purchaseID, primaryKey: .autoincrement)
                 t.column(purchaseItemID, references: itemsTable, itemID)
                 t.column(purchaseStoreID)
                 t.column(purchasePrice)
                 t.column(purchasedAt)
-                t.column(purchaseSource)
+                t.column(purchaseSource, defaultValue: "manual")
             })
             try db.execute("CREATE INDEX IF NOT EXISTS idx_purchase_item ON purchase_history(item_id, purchased_at)")
 
@@ -117,7 +111,6 @@ final class DatabaseManager {
             })
             try db.execute("CREATE INDEX IF NOT EXISTS idx_flyer_item_store ON flyer_sales(item_id, store_id, sale_start_date)")
             try db.execute("CREATE INDEX IF NOT EXISTS idx_flyer_end_date ON flyer_sales(sale_end_date)")
-            // Fix P1-8: unique index prevents duplicate rows on every daily sync.
             try db.execute("""
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_flyer_unique
                 ON flyer_sales(item_id, store_id, sale_start_date, sale_price)
@@ -152,12 +145,24 @@ final class DatabaseManager {
 
             seedDefaultSettings()
 
+            // M2: additive migrations for existing databases.
+            // ALTER TABLE is a no-op if the column already exists (we catch the error).
+            applyM2Migrations()
+
         } catch {
             print("[DatabaseManager] Migration error: \(error)")
         }
     }
 
-    // Inserts default user_settings rows if they don't already exist.
+    /// M2: adds is_seasonal to user_items and qty to purchase_history.
+    /// Safe to call repeatedly — duplicate-column errors are swallowed.
+    private func applyM2Migrations() {
+        // user_items.is_seasonal (INTEGER, default 0)
+        try? db.execute("ALTER TABLE user_items ADD COLUMN is_seasonal INTEGER NOT NULL DEFAULT 0")
+        // purchase_history.qty (INTEGER, default 1)
+        try? db.execute("ALTER TABLE purchase_history ADD COLUMN qty INTEGER NOT NULL DEFAULT 1")
+    }
+
     private func seedDefaultSettings() {
         for (key, value) in defaultSettings {
             let row = userSettingsTable.filter(settingKey == key)
@@ -169,27 +174,22 @@ final class DatabaseManager {
 
     // MARK: - Settings helpers
 
-    // Reads a value from user_settings by key. Returns nil if the key doesn't exist.
     func getSetting(key: String) -> String? {
         let row = userSettingsTable.filter(settingKey == key)
         return try? db.pluck(row).flatMap { $0[settingValue] }
     }
 
-    // Writes or replaces a value in user_settings.
     func setSetting(key: String, value: String?) {
         try? db.run(userSettingsTable.insert(or: .replace,
             settingKey <- key, settingValue <- value))
     }
 
-    // Deletes a key from user_settings entirely.
     func deleteSetting(key: String) {
         try? db.run(userSettingsTable.filter(settingKey == key).delete())
     }
 
     // MARK: - Store helpers
 
-    // Inserts a store by name if it doesn't already exist, then returns its ID.
-    // Safe to call multiple times with the same name.
     @discardableResult
     func upsertStore(name: String) -> Int64 {
         if let existing = try? db.pluck(storesTable.filter(storeName == name)) {
@@ -202,7 +202,6 @@ final class DatabaseManager {
         return id ?? 0
     }
 
-    // Returns all stores that the user has selected (is_selected = 1).
     func fetchSelectedStores() -> [Store] {
         let rows = (try? db.prepare(storesTable.filter(storeIsSelected == 1))) ?? AnySequence([])
         return rows.map { row in
@@ -218,8 +217,6 @@ final class DatabaseManager {
 
     // MARK: - Item helpers
 
-    // Inserts or updates an item by normalised name.
-    // Returns the item's database ID.
     @discardableResult
     func upsertItem(nameNormalised: String, nameDisplay: String) -> Int64 {
         if let existing = try? db.pluck(itemsTable.filter(itemNameNormalised == nameNormalised)) {
@@ -227,25 +224,27 @@ final class DatabaseManager {
         }
         let id = try? db.run(itemsTable.insert(
             itemNameNormalised <- nameNormalised,
-            itemNameDisplay <- nameDisplay,
-            itemCreatedAt <- Date()
+            itemNameDisplay    <- nameDisplay,
+            itemCreatedAt      <- Date()
         ))
         return id ?? 0
     }
 
-    // Ensures a user_items row exists for the given item.
     func upsertUserItem(itemIDValue: Int64) {
         let existing = userItemsTable.filter(userItemsItemID == itemIDValue)
         if (try? db.scalar(existing.count)) == 0 {
             try? db.run(userItemsTable.insert(
-                userItemsItemID <- itemIDValue,
+                userItemsItemID  <- itemIDValue,
                 userItemsAddedDate <- Date(),
-                userItemsIsActive <- 1
+                userItemsIsActive  <- 1
             ))
         }
     }
 
-    // Returns all active user items, sorted by next restock date ascending.
+    // MARK: - Fetch user items
+
+    /// Returns all active user items joined with their item name.
+    /// isSeasonal reads the M2 column (defaults to 0/false for old rows).
     func fetchUserItems() -> [UserItem] {
         let query = userItemsTable
             .join(itemsTable, on: userItemsItemID == itemID)
@@ -261,80 +260,14 @@ final class DatabaseManager {
                 inferredCycleDays: row[userItemsReplenishInferred].map { Int($0) },
                 userOverrideCycleDays: row[userItemsReplenishOverride].map { Int($0) },
                 nextRestockDate: row[userItemsNextRestockDate],
-                // Fix P1-5: per-item alert check, not global count.
-                hasActiveAlert: hasAlertFiredForItem(itemID: row[userItemsItemID])
+                hasActiveAlert: hasAlertFiredForItem(itemID: row[userItemsItemID]),
+                isSeasonal: (row[userItemsIsSeasonal] ?? 0) == 1
             )
         }
     }
 
-    // MARK: - Purchase helpers
+    // MARK: - Price helpers
 
-    // Fix P0-1: markPurchased() is now atomic.
-    // It writes purchase_history AND updates user_items in a single transaction.
-    // Do NOT call insertPurchase() separately after this — that would create a duplicate row.
-    func markPurchased(itemID: Int64, priceAtPurchase: Double?) {
-        let today = Date()
-        do {
-            try db.transaction {
-                // Update the user_items row with today's purchase date.
-                let userItem = userItemsTable.filter(userItemsItemID == itemID)
-                try db.run(userItem.update(
-                    userItemsLastPurchasedDate <- today,
-                    userItemsLastPurchasedPrice <- priceAtPurchase,
-                    userItemsNextRestockDate <- nil  // Reset; recalculated below.
-                ))
-                // Write a purchase_history row so replenishment logic has data.
-                try db.run(purchaseHistoryTable.insert(
-                    purchaseItemID <- itemID,
-                    purchasedAt <- today,
-                    purchasePrice <- priceAtPurchase,
-                    purchaseSource <- "manual"
-                ))
-            }
-            recalculateReplenishment(itemID: itemID)
-        } catch {
-            print("[DatabaseManager] markPurchased failed for itemID \(itemID): \(error)")
-        }
-    }
-
-    // Recalculates the inferred replenishment cycle for an item
-    // using the median interval between its purchase_history rows.
-    // Also updates next_restock_date on user_items.
-    func recalculateReplenishment(itemID: Int64) {
-        let rows = (try? db.prepare(
-            purchaseHistoryTable
-                .filter(purchaseItemID == itemID)
-                .order(purchasedAt.asc)
-        )) ?? AnySequence([])
-
-        let dates = rows.compactMap { $0[purchasedAt] as Date? }
-        guard dates.count >= 2 else { return }
-
-        // Calculate day-intervals between consecutive purchases.
-        var intervals: [Int] = []
-        for i in 1..<dates.count {
-            let days = Calendar.current.dateComponents([.day], from: dates[i - 1], to: dates[i]).day ?? 0
-            if days > 0 { intervals.append(days) }
-        }
-        guard !intervals.isEmpty else { return }
-
-        let sorted = intervals.sorted()
-        // TODO: use true median for even counts: (sorted[n/2-1] + sorted[n/2]) / 2 — P2-1
-        let median = sorted[sorted.count / 2]
-
-        let lastPurchased = dates.last!
-        let nextRestock = Calendar.current.date(byAdding: .day, value: median, to: lastPurchased)
-
-        try? db.run(
-            userItemsTable.filter(userItemsItemID == itemID).update(
-                userItemsReplenishInferred <- Int64(median),
-                userItemsNextRestockDate <- nextRestock
-            )
-        )
-    }
-
-    // Returns the current lowest price for an item across all selected stores.
-    // Used by HomeViewModel when recording the price at time of purchase.
     func currentLowestPrice(for itemID: Int64) -> Double? {
         let sevenDaysAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
         let row = try? db.pluck(
@@ -347,11 +280,11 @@ final class DatabaseManager {
 
     // MARK: - Flyer sale helpers
 
-    // Fix P1-8: INSERT OR IGNORE — unique index on (item_id, store_id, sale_start_date, sale_price)
-    // prevents duplicate rows from accumulating on every daily sync.
-    // On an existing row: only fetched_at is refreshed.
-    func insertFlyerSale(itemID: Int64, storeID: Int64, salePrice: Double,
-                         startDate: Date, endDate: Date?, source: String) {
+    /// Upsert a flyer sale row. Superseded by insertFlyerSale() in +Fixes
+    /// which uses a single ON CONFLICT statement. Both are kept so callers
+    /// that haven't migrated still compile.
+    func insertFlyerSaleSimple(itemID: Int64, storeID: Int64, salePrice: Double,
+                               startDate: Date, endDate: Date?, source: String) {
         let insert = flyerSalesTable.insert(or: .ignore,
             flyerItemID    <- itemID,
             flyerStoreID   <- storeID,
@@ -362,25 +295,17 @@ final class DatabaseManager {
             flyerFetchedAt <- Date()
         )
         try? db.run(insert)
-        // Refresh fetched_at on the existing row (ignore fires on duplicate).
-        let existing = flyerSalesTable.filter(
-            flyerItemID == itemID && flyerStoreID == storeID &&
-            flyerStartDate == startDate && flyerSalePrice == salePrice
-        )
-        try? db.run(existing.update(flyerFetchedAt <- Date()))
     }
 
-    // Returns all flyer sales currently active today for a given item.
     func fetchActiveSales(for itemID: Int64) -> [FlyerSale] {
         let today = Date()
         let query = flyerSalesTable.filter(
-            flyerItemID == itemID &&
-            flyerStartDate <= today
+            flyerItemID == itemID && flyerStartDate <= today
         )
         let rows = (try? db.prepare(query)) ?? AnySequence([])
         return rows.compactMap { row in
             let end = row[flyerEndDate]
-            if let end = end, end < today { return nil }  // expired
+            if let end = end, end < today { return nil }
             return FlyerSale(
                 id: row[flyerID],
                 itemID: row[flyerItemID],
@@ -396,18 +321,6 @@ final class DatabaseManager {
 
     // MARK: - Alert log helpers
 
-    // Fix P1-5: per-item check, not a global count.
-    // Returns true when at least one alert for this specific item fired today.
-    func hasAlertFiredForItem(itemID: Int64) -> Bool {
-        let startOfToday = Calendar.current.startOfDay(for: Date())
-        let count = (try? db.scalar(
-            alertLogTable.filter(alertItemID == itemID && alertFiredAt >= startOfToday).count
-        )) ?? 0
-        return count > 0
-    }
-
-    // Returns how many alerts (any type, any item) have fired today.
-    // Used by AlertEngine to enforce the 3-alert daily cap.
     func alertsFiredToday() -> Int {
         let startOfToday = Calendar.current.startOfDay(for: Date())
         return (try? db.scalar(
@@ -415,32 +328,26 @@ final class DatabaseManager {
         )) ?? 0
     }
 
-    // Writes a new alert_log row. Call this BEFORE firing the UNUserNotificationCenter
-    // request — that way cap + dedup work correctly even if permission is denied.
     func logAlert(itemID: Int64, storeID: Int64, type: String,
                   price: Double, saleEventID: Int64?, notificationID: String?) {
         try? db.run(alertLogTable.insert(
-            alertItemID     <- itemID,
-            alertStoreID    <- storeID,
-            alertType       <- type,
-            alertPrice      <- price,
-            alertFiredAt    <- Date(),
+            alertItemID      <- itemID,
+            alertStoreID     <- storeID,
+            alertType        <- type,
+            alertPrice       <- price,
+            alertFiredAt     <- Date(),
             alertSaleEventID <- saleEventID,
-            alertNotifID    <- notificationID
+            alertNotifID     <- notificationID
         ))
     }
 
     // MARK: - Data hygiene
 
-    // Deletes old flyer_sales and alert_log rows to keep the DB small.
-    // Call after each daily Flipp sync (BackgroundSyncManager).
     func runDataHygiene() {
-        // Remove flyer sales that expired more than 30 days ago.
         try? db.execute("""
             DELETE FROM flyer_sales
             WHERE sale_end_date < date('now', '-30 days')
         """)
-        // Remove alert log entries older than 60 days.
         try? db.execute("""
             DELETE FROM alert_log
             WHERE fired_at < date('now', '-60 days')
