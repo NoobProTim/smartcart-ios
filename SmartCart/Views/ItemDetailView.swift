@@ -3,6 +3,7 @@
 // P1B-AlertSheet: Picker now exposes the three canonical types (A/B/C).
 //   historicalLow (A), sale (B), expiry (C) — all selectable by the user.
 //   .combined is engine-only (auto-merged when A+B both active); not shown as a user option.
+// Part 9 fix: db.storeName(for:) → db.fetchStoreName(for:) in loadData()
 
 import SwiftUI
 import Charts
@@ -211,7 +212,8 @@ struct ItemDetailView: View {
     private func loadData() {
         item         = db.fetchUserItem(itemID: itemID)
         let sid      = db.primaryStoreID(for: itemID) ?? 0
-        storeName    = db.storeName(for: sid) ?? "Unknown Store"
+        // Fix: was db.storeName(for:) — renamed to db.fetchStoreName(for:) in Part 7
+        storeName    = db.fetchStoreName(for: sid) ?? "Unknown Store"
         currentPrice = db.currentLowestPrice(for: itemID)
         viewModel.load(itemID: itemID, range: selectedRange)
     }
