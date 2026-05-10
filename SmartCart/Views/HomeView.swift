@@ -8,6 +8,10 @@
 // Notification-denied in-app nudge banner (Fix from open gaps):
 //   A slim banner slides in at the top when notification permission is .denied.
 //   It is NOT a modal — it's a persistent in-app element that links to Settings.
+//
+// Part 5 fix: ItemDetailView(itemID:) call site corrected.
+//   Was: ItemDetailView(item: item)  — type mismatch, doesn't compile.
+//   Now: ItemDetailView(itemID: item.itemID)
 
 import SwiftUI
 import UserNotifications
@@ -15,11 +19,10 @@ import UserNotifications
 struct HomeView: View {
 
     @StateObject private var vm = HomeViewModel()
-    @State private var notifDenied = false
-    @State private var showScanSheet = false
-    @State private var selectedItem: UserItem? = nil
-    @State private var showPurchaseSheet = false
-    @State private var purchaseTarget: UserItem? = nil
+    @State private var notifDenied      = false
+    @State private var showScanSheet    = false
+    @State private var selectedItem: UserItem?     = nil
+    @State private var purchaseTarget: UserItem?   = nil
 
     var body: some View {
         NavigationStack {
@@ -62,7 +65,6 @@ struct HomeView: View {
                                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                         Button {
                                             purchaseTarget = item
-                                            showPurchaseSheet = true
                                         } label: {
                                             Label("Bought", systemImage: "cart.badge.plus")
                                         }
@@ -92,13 +94,23 @@ struct HomeView: View {
                     .accessibilityLabel("Scan receipt")
                 }
             }
+            // Receipt scan sheet
             .sheet(isPresented: $showScanSheet) {
                 ReceiptScanView()
             }
+            // Item detail sheet — Fix: ItemDetailView takes itemID: Int64, not UserItem
             .sheet(item: $selectedItem) { item in
-                ItemDetailView(item: item)
+                NavigationStack {
+                    ItemDetailView(itemID: item.itemID)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { selectedItem = nil }
+                            }
+                        }
+                }
             }
-            .sheet(item: $purchaseTarget, isPresented: $showPurchaseSheet) { item in
+            // Mark as Purchased sheet (swipe action)
+            .sheet(item: $purchaseTarget) { item in
                 MarkPurchasedSheet(item: item, vm: vm)
             }
             .onAppear {
@@ -198,7 +210,6 @@ private struct SmartListRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // Item name + subtitle
             VStack(alignment: .leading, spacing: 3) {
                 Text(item.nameDisplay)
                     .font(.body)
@@ -221,26 +232,26 @@ private struct SmartListRow: View {
 
     private func restockSubtitle(days: Int, status: RestockStatus) -> String {
         switch status {
-        case .due:           return days < 0 ? "Overdue by \(abs(days))d" : "Due today"
-        case .approaching:   return "In \(days) day\(days == 1 ? "" : "s")"
-        case .ok:            return "In \(days) day\(days == 1 ? "" : "s")"
+        case .due:                return days < 0 ? "Overdue by \(abs(days))d" : "Due today"
+        case .approaching:        return "In \(days) day\(days == 1 ? "" : "s")"
+        case .ok:                 return "In \(days) day\(days == 1 ? "" : "s")"
         case .seasonalSuppressed: return "Seasonal item"
         }
     }
 
     private func captionColor(status: RestockStatus) -> Color {
         switch status {
-        case .due:           return .red
-        case .approaching:   return .orange
-        case .ok:            return .secondary
+        case .due:                return .red
+        case .approaching:        return .orange
+        case .ok:                 return .secondary
         case .seasonalSuppressed: return .secondary
         }
     }
 }
 
 // MARK: - Mark as Purchased sheet
-// Lightweight sheet for the swipe action.
-// Full quantity picker and price field in ItemDetailView.
+// Lightweight sheet invoked via swipe-left on a Smart List row.
+// Full quantity picker and price history chart live in ItemDetailView.
 private struct MarkPurchasedSheet: View {
     let item: UserItem
     @ObservedObject var vm: HomeViewModel
@@ -256,7 +267,11 @@ private struct MarkPurchasedSheet: View {
                         .keyboardType(.decimalPad)
                 }
                 Section("Quantity") {
-                    Stepper("\(quantity) unit\(quantity == 1 ? "" : "s")", value: $quantity, in: 1...99)
+                    Stepper(
+                        "\(quantity) unit\(quantity == 1 ? "" : "s")",
+                        value: $quantity,
+                        in: 1...99
+                    )
                 }
             }
             .navigationTitle(item.nameDisplay)
