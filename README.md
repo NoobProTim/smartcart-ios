@@ -17,8 +17,10 @@ SmartCart/
 ├── SmartCartApp.swift          # App entry point, notification router
 ├── Models/                     # Pure Swift value types (1:1 with DB tables)
 ├── Database/                   # Schema DDL + DatabaseManager (all DB reads/writes)
+├── Engine/                     # ReplenishmentEngine (restock cycle brain)
 ├── Services/                   # FlippService, AlertEngine, ReceiptParser, BackgroundSync
-├── Views/                      # SwiftUI screens and view models
+├── Views/                      # SwiftUI screens
+├── ViewModels/                 # HomeViewModel and other ObservableObjects
 └── Utilities/                  # DateHelper, NameNormaliser, Constants
 ```
 
@@ -32,14 +34,49 @@ SmartCart/
 - **Combined**: A + B merge into one notification when both fire for the same item
 - **Cap**: max 3 alerts/day, sorted by priority
 
+## How Replenishment Works
+
+SmartCart learns your shopping rhythm automatically — you never set a manual reminder.
+
+**Cycle calculation**
+
+Every time you scan a receipt (or tap “Mark as Purchased”), the app records the date and quantity in `purchase_history`. `ReplenishmentEngine` looks at your last two purchases of the same item and computes the average gap in days. That gap becomes your *replenishment cycle*.
+
+- First purchase: no cycle yet — the item shows “No restock estimate”.
+- Second purchase onward: the cycle is live and updates after every new purchase.
+- The predicted restock date (`user_items.next_restock_date`) is written back to the database immediately.
+
+**Bulk quantity scaling**
+
+If you buy 2 or more units of an item at once, the engine multiplies the base cycle by the quantity. Buying 2 packs of paper towels extends the predicted restock date proportionally — you won’t get an alert until you’re actually running low.
+
+**Seasonal suppression**
+
+Items flagged `is_seasonal = 1` (e.g. holiday ham, pumpkin spice anything) have their restock alerts paused outside of their seasonal window. The engine detects seasonality automatically from your purchase history: if all purchases of an item fall within a 90-day band of the calendar year, it is marked seasonal. Alerts resume when the season approaches again.
+
+**Restock badge states**
+
+Every item in the Smart List carries a coloured badge driven by `ReplenishmentEngine.restockStatus(for:)`:
+
+| Badge | Colour | Meaning |
+|---|---|---|
+| Due | Red | Predicted restock date has passed or is today |
+| Soon | Orange | Restock is within the next 3 days |
+| OK | None | Plenty of time remaining |
+| Seasonal | Blue snowflake | Alerts paused — outside seasonal window |
+
+**Alert gating**
+
+`AlertEngine` delegates all restock-window checks to `ReplenishmentEngine.isInRestockWindow(for:)`. A Type A or Type B alert is only fired if the item is within its restock window — preventing price-drop notifications for things you’ve just bought and don’t need yet.
+
 ## Build Status
 | Task | Status |
 |---|---|
 | ATLAS — Architecture & Tech Spec | ✅ Complete |
-| FORGE — Task #1 Scaffold (15 parts) | ✅ Complete |
-| FORGE — Task #1-R1 Retroactive Fixes (6 issues) | ✅ Complete |
-| PRISM — Task #1 QA Review (19 issues) | ✅ Complete |
-| FORGE — Task #2 UI Screens (Parts 1–4) | 🟡 In Progress |
+| FORGE — Task #1 Scaffold | ✅ Complete |
+| FORGE — Task #1-R1 Retroactive Fixes | ✅ Complete |
+| PRISM — Task #1 QA Review | ✅ Complete |
+| FORGE — Task #2 Replenishment Engine (Parts 1–6) | ✅ Complete |
 
 ## Open Issues
 See [GitHub Issues](../../issues) for all tracked P1 items.
