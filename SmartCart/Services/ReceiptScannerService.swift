@@ -1,11 +1,10 @@
 // ReceiptScannerService.swift — SmartCart/Services/ReceiptScannerService.swift
 //
 // Apple Vision OCR pipeline: camera image → VNRecognizeTextRequest
-// → structured ReceiptScanResult { items: [ScannedLineItem], store, date }
+// → structured ReceiptScanResult { id, items, store, date }
 //
-// ATLAS Task #1 — Deliverable 4: Apple Vision OCR Pipeline
-// Confidence threshold: 0.6 (configurable via CONFIDENCE_THRESHOLD)
-// Language: English (en-CA)
+// P1-H fix: ReceiptScanResult now carries `let id: UUID` set at scan time.
+// Identifiable conformance relies on this UUID — no String.hash used anywhere.
 
 import Foundation
 import Vision
@@ -14,17 +13,20 @@ import UIKit
 // MARK: - Output types
 
 struct ScannedLineItem {
-    let nameRaw: String          // raw OCR text for the item name
-    let nameNormalised: String   // lowercased, units/punctuation stripped
+    let nameRaw: String
+    let nameNormalised: String
     let price: Double
     let confidence: Float
 }
 
-struct ReceiptScanResult {
+// P1-H: id is a stable UUID assigned once in ReceiptScannerService.scan().
+// .sheet(item: $scanResult) uses this id for identity — no hash collision possible.
+struct ReceiptScanResult: Identifiable {
+    let id: UUID                 // P1-H: stable scan identity
     let items: [ScannedLineItem]
-    let storeNameRaw: String?    // first high-confidence line (likely store header)
-    let receiptDate: Date?       // parsed from receipt text if found
-    let rawLines: [String]       // all recognised lines, for debug / manual review
+    let storeNameRaw: String?
+    let receiptDate: Date?
+    let rawLines: [String]
 }
 
 // MARK: - Service
@@ -34,19 +36,17 @@ final class ReceiptScannerService {
     static let shared = ReceiptScannerService()
     private init() {}
 
-    /// Minimum Vision confidence score to accept a text observation.
     private let confidenceThreshold: Float = 0.6
 
     // MARK: - Public API
 
-    /// Runs the full OCR pipeline on a UIImage (from camera or photo library).
-    /// Returns a ReceiptScanResult on success, or throws on Vision error.
     func scan(image: UIImage) async throws -> ReceiptScanResult {
         guard let cgImage = image.cgImage else {
             throw ScanError.invalidImage
         }
         let lines = try await recogniseText(in: cgImage)
-        return parseReceipt(lines: lines)
+        // P1-H: UUID generated here, once, at scan time.
+        return parseReceipt(lines: lines, id: UUID())
     }
 
     // MARK: - Vision text recognition
@@ -59,7 +59,6 @@ final class ReceiptScannerService {
                     return
                 }
                 let observations = request.results as? [VNRecognizedTextObservation] ?? []
-                // Sort top-to-bottom by bounding box Y origin (receipts read top-down).
                 let sorted = observations.sorted {
                     $0.boundingBox.origin.y > $1.boundingBox.origin.y
                 }
@@ -77,7 +76,7 @@ final class ReceiptScannerService {
             request.recognitionLevel       = .accurate
             request.recognitionLanguages   = ["en-CA", "en-US"]
             request.usesLanguageCorrection = true
-            request.minimumTextHeight      = 0.01  // ignore tiny artefacts
+            request.minimumTextHeight      = 0.01
 
             let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
             do {
@@ -90,21 +89,15 @@ final class ReceiptScannerService {
 
     // MARK: - Receipt structure parsing
 
-    private func parseReceipt(lines: [RecognisedLine]) -> ReceiptScanResult {
+    private func parseReceipt(lines: [RecognisedLine], id: UUID) -> ReceiptScanResult {
         var scannedItems: [ScannedLineItem] = []
         var storeNameRaw: String? = nil
         var receiptDate: Date? = nil
         let rawLines = lines.map { $0.text }
 
-        // Heuristic: the first non-empty high-confidence line is likely the store name.
         storeNameRaw = lines.first?.text
+        receiptDate  = extractDate(from: rawLines)
 
-        // Parse date from any line that matches common receipt date formats.
-        receiptDate = extractDate(from: rawLines)
-
-        // Item + price extraction:
-        // Receipt lines typically follow: "ITEM NAME   $X.XX" or "ITEM NAME   X.XX"
-        // Strategy: look for lines containing a price pattern, extract item name as prefix.
         for line in lines {
             if let item = extractLineItem(from: line) {
                 scannedItems.append(item)
@@ -112,26 +105,21 @@ final class ReceiptScannerService {
         }
 
         return ReceiptScanResult(
-            items: scannedItems,
+            id:           id,
+            items:        scannedItems,
             storeNameRaw: storeNameRaw,
-            receiptDate: receiptDate,
-            rawLines: rawLines
+            receiptDate:  receiptDate,
+            rawLines:     rawLines
         )
     }
 
     // MARK: - Line-item extraction
 
-    // Matches: optional leading text, then a price at the end of the line.
-    // Examples:
-    //   "WHOLE MILK 2L           2.99"
-    //   "BANANAS                $1.49 B"
-    //   "ORG SPINACH            3.99 F"
     private let pricePattern = try! NSRegularExpression(
         pattern: #"^(.+?)\s+\$?([0-9]+\.[0-9]{2})\s*[A-Z]?$"#,
         options: .caseInsensitive
     )
 
-    // Lines to skip — totals, tax, payment lines, headers.
     private let skipKeywords = [
         "subtotal", "sub total", "total", "tax", "hst", "gst",
         "pst", "cash", "change", "debit", "credit", "visa",
@@ -140,38 +128,29 @@ final class ReceiptScannerService {
     ]
 
     private func extractLineItem(from line: RecognisedLine) -> ScannedLineItem? {
-        let text = line.text
+        let text  = line.text
         let lower = text.lowercased()
-
-        // Skip non-item lines.
         for keyword in skipKeywords {
             if lower.contains(keyword) { return nil }
         }
-
         let range = NSRange(text.startIndex..., in: text)
         guard let match = pricePattern.firstMatch(in: text, range: range),
               match.numberOfRanges >= 3 else { return nil }
-
         guard let nameRange  = Range(match.range(at: 1), in: text),
               let priceRange = Range(match.range(at: 2), in: text),
               let price = Double(text[priceRange]) else { return nil }
-
         let nameRaw = String(text[nameRange]).trimmingCharacters(in: .whitespaces)
-        guard nameRaw.count >= 2 else { return nil }  // ignore single-char artefacts
-
+        guard nameRaw.count >= 2 else { return nil }
         return ScannedLineItem(
-            nameRaw:         nameRaw,
-            nameNormalised:  normalise(nameRaw),
-            price:           price,
-            confidence:      line.confidence
+            nameRaw:        nameRaw,
+            nameNormalised: normalise(nameRaw),
+            price:          price,
+            confidence:     line.confidence
         )
     }
 
     // MARK: - Name normalisation
 
-    // Lowercases, strips unit suffixes, collapses whitespace.
-    // "WHOLE MILK 2L" → "whole milk"
-    // "ORG SPINACH 142G" → "org spinach"
     private let unitSuffixPattern = try! NSRegularExpression(
         pattern: #"\s*\d+\s*(ml|l|g|kg|oz|lb|lbs|pk|ct|ea)\b"#,
         options: .caseInsensitive
@@ -182,7 +161,6 @@ final class ReceiptScannerService {
         let r = NSRange(s.startIndex..., in: s)
         s = unitSuffixPattern.stringByReplacingMatches(in: s, range: r, withTemplate: "")
         s = s.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Collapse multiple spaces.
         while s.contains("  ") { s = s.replacingOccurrences(of: "  ", with: " ") }
         return s
     }
@@ -200,7 +178,6 @@ final class ReceiptScannerService {
         )
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_CA")
-
         for line in lines {
             let range = NSRange(line.startIndex..., in: line)
             guard let match = datePattern.firstMatch(in: line, range: range),

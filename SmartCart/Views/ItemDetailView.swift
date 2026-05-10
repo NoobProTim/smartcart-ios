@@ -1,7 +1,8 @@
 // ItemDetailView.swift — SmartCart/Views/ItemDetailView.swift
-// P1-D: Functional replacement for the Part 7 WIP stub.
-// Wired from HomeView itemList NavigationLinks and NotificationRouter deep-links.
-// Design reference: Batch 3, Screen 7 wireframe.
+// P1-D: Functional ItemDetailView wired from HomeView and NotificationRouter.
+// P1B-AlertSheet: Picker now exposes the three canonical types (A/B/C).
+//   historicalLow (A), sale (B), expiry (C) — all selectable by the user.
+//   .combined is engine-only (auto-merged when A+B both active); not shown as a user option.
 
 import SwiftUI
 import Charts
@@ -45,7 +46,6 @@ struct ItemDetailView: View {
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
-                    // P1-E: Seasonal badge
                     if item?.isSeasonal == true {
                         Label("Seasonal item — restock alerts paused", systemImage: "snowflake")
                             .font(.caption)
@@ -239,27 +239,35 @@ struct ItemDetailView: View {
 }
 
 // MARK: - Alert type picker sheet
+// P1B: Exposes the three user-configurable types: A (Historical Low), B (Sale), C (Expiry).
+// .combined is NOT shown here — it is engine-only, auto-fired when A+B are both active.
 private struct AlertSheet: View {
     let itemID: Int64
-    @State private var selection: AlertType = .sale
+    @State private var selection: AlertType = .historicalLow
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Alert Type") {
+                    // A — Historical Low
                     Picker("Type", selection: $selection) {
-                        Text("Historical Low (Type A)").tag(AlertType.historicalLow)
-                        Text("Sale Alert (Type B)").tag(AlertType.sale)
-                        Text("Sale + Low Combined").tag(AlertType.combined)
+                        Text("Type A — Historical Low").tag(AlertType.historicalLow)
+                        Text("Type B — Sale Alert").tag(AlertType.sale)
+                        Text("Type C — Expiry Reminder").tag(AlertType.expiry)
                     }
                     .pickerStyle(.inline)
                     .labelsHidden()
                 }
                 Section {
-                    Text(selection.description)
+                    Text(selection.userDescription)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                }
+                Section {
+                    Text("Note: when both a Historical Low and a Sale are active at the same time, the engine automatically fires a combined alert — you don't need to configure this separately.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
                 }
             }
             .navigationTitle("Configure Alert")
@@ -294,14 +302,20 @@ enum ChartRange: String, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - AlertType description helper
+// MARK: - AlertType user-facing description
+// P1B: Renamed from `description` → `userDescription` to avoid shadowing CustomStringConvertible.
+// The engine-only `.combined` case is included for completeness but not surfaced in AlertSheet.
 extension AlertType {
-    var description: String {
+    var userDescription: String {
         switch self {
-        case .historicalLow: return "Fire when this item drops below its 90-day average price."
-        case .sale:          return "Fire when a flyer sale exceeds your minimum discount threshold."
-        case .expiry:        return "Fire one day before a tracked sale ends."
-        case .combined:      return "Fire only when both a price low AND a sale are active simultaneously."
+        case .historicalLow:
+            return "Fire when this item drops below its 90-day store average (Type A). Ideal for catching genuine long-term lows."
+        case .sale:
+            return "Fire when a flyer sale exceeds your minimum discount threshold (Type B). Fires once per sale event."
+        case .expiry:
+            return "Fire one day before a tracked sale ends (Type C). Reminds you to buy before the deal expires."
+        case .combined:
+            return "Engine-only: fires automatically when a sale (Type B) and a historical low (Type A) are both active simultaneously."
         }
     }
 }
