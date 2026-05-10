@@ -89,8 +89,19 @@ extension DatabaseManager {
         return row.flatMap { $0[userItemsLastStoreID] }
     }
 
-    func storeName(for storeID: Int64) -> String? {
-        let row = try? db.pluck(storesTable.filter(self.storeID == storeID).select(storeName))
-        return row?[storeName]
+    // Fix: renamed from storeName(for storeID:) to eliminate two naming collisions:
+    //   1. Method name `storeName` shadowed the module-level Expression<String> `storeName`
+    //      making `row?[storeName]` potentially resolve to the recursive function instead of the column.
+    //   2. Parameter `storeID` shadowed the module-level Expression<Int64> `storeID`
+    //      making `storesTable.filter(storeID == storeIDParam)` possibly compile as Bool == Bool
+    //      rather than a SQLite Expression predicate.
+    // AlertEngine.swift updated to call db.fetchStoreName(for:) instead.
+    func fetchStoreName(for storeIDParam: Int64) -> String? {
+        // Use local aliases to guarantee the compiler binds to the module-level
+        // Expression constants, not the parameter or this method.
+        let colID:   Expression<Int64>  = storeID
+        let colName: Expression<String> = storeName
+        let row = try? db.pluck(storesTable.filter(colID == storeIDParam).select(colName))
+        return row?[colName]
     }
 }

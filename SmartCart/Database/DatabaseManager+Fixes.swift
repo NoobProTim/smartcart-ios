@@ -24,7 +24,7 @@ extension DatabaseManager {
                     purchaseItemID  <- itemID,
                     purchasedAt     <- today,
                     purchasePrice   <- priceAtPurchase,
-                    purchaseQty     <- qty
+                    purchaseQty     <- Int64(qty)   // Fix: qty is Int, Expression<Int64> needs Int64
                 ))
             }
             recalculateReplenishment(itemID: itemID, quantity: qty)
@@ -34,9 +34,9 @@ extension DatabaseManager {
         }
     }
 
-    // Scales next-restock by quantity so bulk buys don't inflate the date
-    // by a single cycle. Called immediately after the transaction above.
-    private func recalculateReplenishment(itemID: Int64, quantity: Int) {
+    // Fix: was `private` — `private` is file-scoped in Swift, so DatabaseManager+Purchases.swift
+    // (a different file) cannot call this. Changed to internal.
+    func recalculateReplenishment(itemID: Int64, quantity: Int) {
         guard let cycleDays = fetchCycleDays(for: itemID) else { return }
         let scaledDays  = cycleDays * quantity
         let nextRestock = Calendar.current.date(

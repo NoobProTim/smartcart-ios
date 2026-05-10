@@ -3,6 +3,8 @@
 //   P1-A: weekly cap wired — both alertsFiredToday() and alertsFiredThisWeek() gate firing
 //   P1-E: seasonal items skipped before any price/history work
 //   P1-F: store-scoped rollingAverage90(for:storeID:) used for threshold; all-stores fallback retained
+// Part 7 fix:
+//   db.storeName(for:) → db.fetchStoreName(for:) matching rename in DatabaseManager+Alerts.swift
 import Foundation
 import UserNotifications
 
@@ -47,7 +49,8 @@ final class AlertEngine {
 
             // P1-F: Resolve primary store; use store-scoped average for threshold.
             let storeID   = db.primaryStoreID(for: item.itemID) ?? 0
-            let storeName = db.storeName(for: storeID) ?? "Unknown Store"
+            // Fix: was db.storeName(for:) — renamed to db.fetchStoreName(for:)
+            let storeName = db.fetchStoreName(for: storeID) ?? "Unknown Store"
 
             // P1-F: Prefer store-scoped 90-day average; fall back to all-stores if no store data.
             let rollingAvg: Double?
