@@ -15,7 +15,8 @@ import SQLite
 final class DatabaseManager {
 
     static let shared = DatabaseManager()
-    var db: Connection!   // internal so +Fixes extensions can reach it
+    /// internal so +Fixes / +Alerts / +Purchases extensions can reach it.
+    var db: Connection!
 
     private init() {
         do {
@@ -60,7 +61,7 @@ final class DatabaseManager {
             })
             try db.execute("CREATE INDEX IF NOT EXISTS idx_items_name ON items(name_normalised)")
 
-            // user_items (M1 schema)
+            // user_items (M1 base schema)
             try db.run(userItemsTable.create(ifNotExists: true) { t in
                 t.column(userItemID, primaryKey: .autoincrement)
                 t.column(userItemsItemID, references: itemsTable, itemID)
@@ -75,7 +76,7 @@ final class DatabaseManager {
             })
             try db.execute("CREATE INDEX IF NOT EXISTS idx_user_items_item ON user_items(item_id)")
 
-            // purchase_history (M1 schema)
+            // purchase_history (M1 base schema)
             try db.run(purchaseHistoryTable.create(ifNotExists: true) { t in
                 t.column(purchaseID, primaryKey: .autoincrement)
                 t.column(purchaseItemID, references: itemsTable, itemID)
@@ -145,8 +146,8 @@ final class DatabaseManager {
 
             seedDefaultSettings()
 
-            // M2: additive migrations for existing databases.
-            // ALTER TABLE is a no-op if the column already exists (we catch the error).
+            // M2: additive migrations for existing databases (is_seasonal, qty).
+            // ALTER TABLE is a no-op if the column already exists; errors are swallowed.
             applyM2Migrations()
 
         } catch {
@@ -154,12 +155,9 @@ final class DatabaseManager {
         }
     }
 
-    /// M2: adds is_seasonal to user_items and qty to purchase_history.
-    /// Safe to call repeatedly — duplicate-column errors are swallowed.
+    /// M2 additive migrations. Safe to call repeatedly.
     private func applyM2Migrations() {
-        // user_items.is_seasonal (INTEGER, default 0)
         try? db.execute("ALTER TABLE user_items ADD COLUMN is_seasonal INTEGER NOT NULL DEFAULT 0")
-        // purchase_history.qty (INTEGER, default 1)
         try? db.execute("ALTER TABLE purchase_history ADD COLUMN qty INTEGER NOT NULL DEFAULT 1")
     }
 
@@ -195,11 +193,10 @@ final class DatabaseManager {
         if let existing = try? db.pluck(storesTable.filter(storeName == name)) {
             return existing[storeID]
         }
-        let id = try? db.run(storesTable.insert(
+        return (try? db.run(storesTable.insert(
             storeName <- name,
             storeIsSelected <- 1
-        ))
-        return id ?? 0
+        ))) ?? 0
     }
 
     func fetchSelectedStores() -> [Store] {
@@ -222,19 +219,18 @@ final class DatabaseManager {
         if let existing = try? db.pluck(itemsTable.filter(itemNameNormalised == nameNormalised)) {
             return existing[itemID]
         }
-        let id = try? db.run(itemsTable.insert(
+        return (try? db.run(itemsTable.insert(
             itemNameNormalised <- nameNormalised,
             itemNameDisplay    <- nameDisplay,
             itemCreatedAt      <- Date()
-        ))
-        return id ?? 0
+        ))) ?? 0
     }
 
     func upsertUserItem(itemIDValue: Int64) {
         let existing = userItemsTable.filter(userItemsItemID == itemIDValue)
         if (try? db.scalar(existing.count)) == 0 {
             try? db.run(userItemsTable.insert(
-                userItemsItemID  <- itemIDValue,
+                userItemsItemID    <- itemIDValue,
                 userItemsAddedDate <- Date(),
                 userItemsIsActive  <- 1
             ))
@@ -243,8 +239,8 @@ final class DatabaseManager {
 
     // MARK: - Fetch user items
 
-    /// Returns all active user items joined with their item name.
-    /// isSeasonal reads the M2 column (defaults to 0/false for old rows).
+    /// Returns all active tracked items joined with their display name.
+    /// isSeasonal reads the M2 column (defaults 0/false on old rows).
     func fetchUserItems() -> [UserItem] {
         let query = userItemsTable
             .join(itemsTable, on: userItemsItemID == itemID)
@@ -280,23 +276,8 @@ final class DatabaseManager {
 
     // MARK: - Flyer sale helpers
 
-    /// Upsert a flyer sale row. Superseded by insertFlyerSale() in +Fixes
-    /// which uses a single ON CONFLICT statement. Both are kept so callers
-    /// that haven't migrated still compile.
-    func insertFlyerSaleSimple(itemID: Int64, storeID: Int64, salePrice: Double,
-                               startDate: Date, endDate: Date?, source: String) {
-        let insert = flyerSalesTable.insert(or: .ignore,
-            flyerItemID    <- itemID,
-            flyerStoreID   <- storeID,
-            flyerSalePrice <- salePrice,
-            flyerStartDate <- startDate,
-            flyerEndDate   <- endDate,
-            flyerSource    <- source,
-            flyerFetchedAt <- Date()
-        )
-        try? db.run(insert)
-    }
-
+    /// Returns all flyer sales currently active today for a given item.
+    /// Includes regularPrice so FlyerSale.discountPercent() works correctly.
     func fetchActiveSales(for itemID: Int64) -> [FlyerSale] {
         let today = Date()
         let query = flyerSalesTable.filter(
@@ -305,16 +286,17 @@ final class DatabaseManager {
         let rows = (try? db.prepare(query)) ?? AnySequence([])
         return rows.compactMap { row in
             let end = row[flyerEndDate]
-            if let end = end, end < today { return nil }
+            if let end = end, end < today { return nil }   // expired
             return FlyerSale(
-                id: row[flyerID],
-                itemID: row[flyerItemID],
-                storeID: row[flyerStoreID],
-                salePrice: row[flyerSalePrice],
-                validFrom: row[flyerStartDate],
-                validTo: row[flyerEndDate],
-                source: row[flyerSource],
-                fetchedAt: row[flyerFetchedAt]
+                id:           row[flyerID],
+                itemID:       row[flyerItemID],
+                storeID:      row[flyerStoreID],
+                salePrice:    row[flyerSalePrice],
+                regularPrice: row[flyerRegularPrice],      // Fix: was missing
+                validFrom:    row[flyerStartDate],
+                validTo:      row[flyerEndDate],
+                source:       row[flyerSource],
+                fetchedAt:    row[flyerFetchedAt]
             )
         }
     }
