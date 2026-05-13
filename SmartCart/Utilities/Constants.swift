@@ -4,8 +4,15 @@ import Foundation
 enum Constants {
 
     // MARK: - Replenishment
-    static let defaultReplenishmentDays = 14
-    static let restockWindowDays = 3
+    // defaultReplenishmentDays: used when no purchase history exists at all.
+    // minReplenishmentDays: inferred cycle is never allowed to go below this (prevents 1-day restock spam).
+    // maxReplenishmentDays: inferred cycle is never allowed to exceed this (prevents 6-month silence).
+    // inferenceMinPurchases: minimum number of purchases before we trust the inferred median.
+    static let defaultReplenishmentDays  = 14
+    static let minReplenishmentDays      = 3
+    static let maxReplenishmentDays      = 180
+    static let inferenceMinPurchases     = 3
+    static let restockWindowDays         = 3
 
     // MARK: - Alert caps
     static let maxAlertsPerDay   = 5
