@@ -1,10 +1,16 @@
 // HomeViewModel.swift — SmartCart/ViewModels/HomeViewModel.swift
 //
 // Drives HomeView. Owns the list of tracked items and exposes:
-//   • items          — all active UserItems for the Smart List
+//   • items          — all active UserItems, sorted by ReplenishmentEngine urgency
 //   • todaysDeals    — items that currently have an active flyer sale
 //   • restockStatus  — per-item restock badge state (from ReplenishmentEngine)
 //   • isLoading      — loading spinner flag
+//
+// SORT ORDER (Issue #15 fix):
+//   Sorting is fully delegated to ReplenishmentEngine.shared.sortedByUrgency(_:).
+//   HomeViewModel no longer contains any sort or priority logic — it just passes
+//   the raw array in and uses what comes back. This ensures HomeView and any
+//   other consumer always see the same order.
 //
 // All DB reads happen on a background Task; @Published updates are
 // dispatched back to the main actor automatically via @MainActor.
@@ -17,7 +23,8 @@ final class HomeViewModel: ObservableObject {
 
     // MARK: - Published state
 
-    /// All active tracked items, sorted: due-for-restock first, then alphabetical.
+    /// All active tracked items, sorted by urgency score descending.
+    /// Active-alert items pin at top, then overdue, then approaching, then ok.
     @Published var items: [UserItem] = []
 
     /// Items that have at least one active flyer sale today.
@@ -34,8 +41,8 @@ final class HomeViewModel: ObservableObject {
 
     // MARK: - Private dependencies
 
-    private let db      = DatabaseManager.shared
-    private let engine  = ReplenishmentEngine.shared
+    private let db     = DatabaseManager.shared
+    private let engine = ReplenishmentEngine.shared
 
     // MARK: - Public API
 
@@ -46,10 +53,14 @@ final class HomeViewModel: ObservableObject {
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
 
-            let allItems   = self.db.fetchUserItems()
-            let deals      = self.computeTodaysDeals(from: allItems)
-            let statuses   = self.computeRestockStatuses(for: allItems)
-            let sorted     = self.sortItems(allItems)
+            let allItems = self.db.fetchUserItems()
+            let deals    = self.computeTodaysDeals(from: allItems)
+            let statuses = self.computeRestockStatuses(for: allItems)
+
+            // Delegate sort entirely to ReplenishmentEngine.
+            // urgencyScore() ranks: active-alert > overdue > in-window > ok.
+            // Fixes Issue #15 — items with active alerts now pin to the top.
+            let sorted = self.engine.sortedByUrgency(allItems)
 
             await MainActor.run {
                 self.items           = sorted
@@ -79,10 +90,10 @@ final class HomeViewModel: ObservableObject {
 
     // MARK: - Private helpers
 
-    /// Asks ReplenishmentEngine for the status of every item.
-    /// This is O(n) DB reads — acceptable for typical list sizes (< 100 items).
+    /// Asks ReplenishmentEngine for the RestockStatus of every item.
+    /// Used only for badge rendering in HomeView rows — NOT for sort order.
+    /// Sort order comes from sortedByUrgency(), not from these statuses.
     private func computeRestockStatuses(for items: [UserItem]) -> [Int64: RestockStatus] {
-        // Pass the already-loaded UserItem directly to avoid redundant DB reads.
         var result: [Int64: RestockStatus] = [:]
         for item in items {
             result[item.itemID] = engine.restockStatus(for: item)
@@ -93,34 +104,5 @@ final class HomeViewModel: ObservableObject {
     /// Filters for items with at least one active flyer sale today.
     private func computeTodaysDeals(from items: [UserItem]) -> [UserItem] {
         items.filter { !db.fetchActiveSales(for: $0.itemID).isEmpty }
-    }
-
-    /// Sort order: due / approaching items first (soonest restock date first),
-    /// then remaining items alphabetically.
-    private func sortItems(_ items: [UserItem]) -> [UserItem] {
-        items.sorted { a, b in
-            let statusA = engine.restockStatus(for: a)
-            let statusB = engine.restockStatus(for: b)
-            let priorityA = restockPriority(statusA)
-            let priorityB = restockPriority(statusB)
-            if priorityA != priorityB { return priorityA < priorityB }
-            // Within the same priority bucket, sort by restock date (soonest first)
-            // then fall back to name.
-            if let da = a.nextRestockDate, let db = b.nextRestockDate {
-                return da < db
-            }
-            return a.nameDisplay.localizedCaseInsensitiveCompare(b.nameDisplay) == .orderedAscending
-        }
-    }
-
-    /// Lower number = higher in the list.
-    /// TUNE: adjust these numbers to reorder priority buckets.
-    private func restockPriority(_ status: RestockStatus) -> Int {
-        switch status {
-        case .due:                 return 0   // Always at the top
-        case .approaching:         return 1   // Just below due
-        case .ok:                  return 2
-        case .seasonalSuppressed:  return 3   // Seasonal at the bottom
-        }
     }
 }
