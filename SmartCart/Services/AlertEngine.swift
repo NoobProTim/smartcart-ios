@@ -1,241 +1,246 @@
-// AlertEngine.swift — SmartCart/Services/AlertEngine.swift
-// P1B fixes applied:
-//   P1-A: weekly cap wired — both alertsFiredToday() and alertsFiredThisWeek() gate firing
-//   P1-E: seasonal items skipped before any price/history work
-//   P1-F: store-scoped rollingAverage90(for:storeID:) used for threshold; all-stores fallback retained
-// Part 7 fix:
-//   db.storeName(for:) → db.fetchStoreName(for:) matching rename in DatabaseManager+Alerts.swift
+// AlertEngine.swift
+// SmartCart — Services/AlertEngine.swift
+//
+// Evaluates all tracked items and fires push notifications for qualifying
+// price events. Three alert types:
+//   A — Historical Low:   today's regular price < 90-day rolling average
+//   B — Sale Alert:       active flyer sale exists at a selected store
+//   C — Expiry Reminder:  a qualifying sale expires within 24 hours
+//
+// A + B fire together as a "Combined" alert when both apply to the same item.
+//
+// UPDATED IN TASK #3 (P1-2):
+// Removed resetDailyCounterIfNeeded() — it updated user_settings fields
+// (daily_alert_count / daily_alert_date) that were never reliably read.
+// The daily cap is now enforced EXCLUSIVELY by alertsFiredToday() which
+// counts alert_log rows for today. This is the single source of truth.
+// See Constants.dailyAlertCap and Schema.swift for context.
+
 import Foundation
 import UserNotifications
 
+// MARK: - AlertCandidate
+// Internal struct representing a potential alert before it fires.
+// AlertEngine builds a list of these, sorts by priority, then fires
+// the top N up to the daily cap.
+struct AlertCandidate {
+    let itemID: Int64
+    let itemName: String
+    let alertType: String        // "historical_low" | "sale" | "combined" | "expiry"
+    let triggerPrice: Double
+    let storeName: String?       // Name of the store where the sale/low was found
+    let priority: Int            // Lower = higher priority. 1=combined, 2=historical, 3=sale, 4=expiry
+}
+
+// MARK: - AlertEngine
 final class AlertEngine {
 
     static let shared = AlertEngine()
-    private let db = DatabaseManager.shared
     private init() {}
 
-    // MARK: - Entry point
-    func runDailyEvaluation() {
-        Task.detached(priority: .background) { [weak self] in
-            guard let self else { return }
-            await self.evaluate()
-        }
-    }
+    // MARK: - evaluate()
+    // Main entry point. Called by BackgroundSyncManager after Flipp sync completes.
+    // Evaluates all tracked items, builds candidates, deduplicates, enforces the
+    // daily cap, writes to alert_log, and fires UNUserNotificationCenter requests.
+    //
+    // WHY: Centralising all alert logic here means the daily cap and dedup rules
+    // are impossible to accidentally bypass — any code path that fires an alert
+    // must go through this function.
+    func evaluate() {
+        let db = DatabaseManager.shared
 
-    // MARK: - Core evaluation
-    private func evaluate() async {
-        let notificationsEnabled = db.getSetting(key: "notification_enabled") == "1"
-        guard notificationsEnabled else { return }
-
-        // P1-A: Gate on BOTH daily and weekly caps before entering the item loop.
-        let firedToday  = db.alertsFiredToday()
-        let firedWeek   = db.alertsFiredThisWeek()
-        let remToday    = max(0, Constants.maxAlertsPerDay  - firedToday)
-        let remWeek     = max(0, Constants.maxAlertsPerWeek - firedWeek)
-        let globalRem   = min(remToday, remWeek)
-        guard globalRem > 0 else { return }
-
-        let minDiscount = Int(db.getSetting(key: "min_discount_threshold") ?? "0") ?? 0
-        let restockOnly = db.getSetting(key: "sale_alert_restock_only") == "1"
-
-        let userItems = db.fetchUserItems()
-        guard !userItems.isEmpty else { return }
+        guard db.getSetting(key: "notification_enabled") == "1" else { return }
 
         var candidates: [AlertCandidate] = []
+        candidates.append(contentsOf: evaluateTypeA())
+        candidates.append(contentsOf: evaluateTypeB())
+        candidates.append(contentsOf: evaluateTypeC())
 
-        for item in userItems {
-            // P1-E: Skip seasonal items before any expensive price/history work.
-            if item.isSeasonal { continue }
-
-            // P1-F: Resolve primary store; use store-scoped average for threshold.
-            let storeID   = db.primaryStoreID(for: item.itemID) ?? 0
-            // Fix: was db.storeName(for:) — renamed to db.fetchStoreName(for:)
-            let storeName = db.fetchStoreName(for: storeID) ?? "Unknown Store"
-
-            // P1-F: Prefer store-scoped 90-day average; fall back to all-stores if no store data.
-            let rollingAvg: Double?
-            if storeID > 0 {
-                rollingAvg = db.rollingAverage90(for: item.itemID, storeID: storeID)
-                          ?? db.rollingAverage90(for: item.itemID)
-            } else {
-                rollingAvg = db.rollingAverage90(for: item.itemID)
-            }
-
-            let currentPrice = db.currentLowestPrice(for: item.itemID)
-            let activeSales  = db.fetchActiveSales(for: item.itemID)
-
-            // Type A: Historical Low
-            if let avg = rollingAvg, let price = currentPrice {
-                let threshold        = historicalLowThreshold
-                let isLow            = price <= avg * threshold
-                let belowLastPurchase = item.lastPurchasedPrice.map { price <= $0 } ?? true
-                let inWindow         = item.isInRestockWindow
-                let alreadyFired     = db.hasAlertFiredForItemType(itemID: item.itemID, type: .historicalLow)
-
-                if isLow && belowLastPurchase && inWindow && !alreadyFired {
-                    candidates.append(AlertCandidate(
-                        itemID: item.itemID, storeID: storeID, type: .historicalLow,
-                        price: price, regularPrice: avg, saleEventID: nil, saleEndDate: nil,
-                        itemName: item.nameDisplay, storeName: storeName,
-                        monthsLow: monthsAtLow(price: price, avg: avg)
-                    ))
-                }
-            }
-
-            // Type B: Sale Alert
-            let saleAlertsEnabled = db.getSetting(key: "sale_alerts_enabled") == "1"
-            if saleAlertsEnabled {
-                for sale in activeSales {
-                    let discountPct  = sale.discountPercent(fallbackRegularPrice: rollingAvg) ?? 0
-                    let windowOK     = restockOnly ? item.isInRestockWindow : true
-                    let alreadyFired = db.hasAlertFiredForSaleEvent(itemID: item.itemID, saleEventID: sale.id)
-
-                    if discountPct >= Double(minDiscount) && windowOK && !alreadyFired {
-                        candidates.append(AlertCandidate(
-                            itemID: item.itemID, storeID: sale.storeID, type: .sale,
-                            price: sale.salePrice, regularPrice: sale.regularPrice ?? rollingAvg,
-                            saleEventID: sale.id, saleEndDate: sale.validTo,
-                            itemName: item.nameDisplay, storeName: storeName, monthsLow: nil
-                        ))
-                    }
-                }
-            }
-
-            // Type C: Expiry Reminder
-            let expiryEnabled = db.getSetting(key: "flyer_expiry_reminder") == "1"
-            let daysBefore    = Int(db.getSetting(key: "expiry_reminder_days_before") ?? "1") ?? 1
-            if expiryEnabled {
-                for sale in db.fetchSalesExpiring(for: item.itemID, inDays: daysBefore) {
-                    let purchased    = db.purchasedDuringSale(itemID: item.itemID, sale: sale)
-                    let alreadyFired = db.hasAlertFiredForSaleEvent(itemID: item.itemID,
-                                                                    saleEventID: sale.id,
-                                                                    type: .expiry)
-                    if !purchased && !alreadyFired {
-                        candidates.append(AlertCandidate(
-                            itemID: item.itemID, storeID: sale.storeID, type: .expiry,
-                            price: sale.salePrice, regularPrice: sale.regularPrice ?? rollingAvg,
-                            saleEventID: sale.id, saleEndDate: sale.validTo,
-                            itemName: item.nameDisplay, storeName: storeName, monthsLow: nil
-                        ))
-                    }
-                }
-            }
-        }
-
-        // Merge Type A + B → combined where same item has both
-        var merged: [AlertCandidate] = []
-        let itemsWithLow  = Set(candidates.filter { $0.type == .historicalLow }.map { $0.itemID })
-        let itemsWithSale = Set(candidates.filter { $0.type == .sale }.map { $0.itemID })
-        let combinedIDs   = itemsWithLow.intersection(itemsWithSale)
-
-        for c in candidates {
-            if combinedIDs.contains(c.itemID) {
-                if c.type == .sale {
-                    merged.append(AlertCandidate(
-                        itemID: c.itemID, storeID: c.storeID, type: .combined,
-                        price: c.price, regularPrice: c.regularPrice,
-                        saleEventID: c.saleEventID, saleEndDate: c.saleEndDate,
-                        itemName: c.itemName, storeName: c.storeName,
-                        monthsLow: candidates.first(where: {
-                            $0.itemID == c.itemID && $0.type == .historicalLow
-                        })?.monthsLow
-                    ))
-                }
-                // Drop the raw .historicalLow entry — it's merged into .combined above.
-            } else {
-                merged.append(c)
-            }
-        }
-
+        let merged = mergeAndDedup(candidates)
         let sorted = merged.sorted { $0.priority < $1.priority }
 
-        // P1-A: Respect the smaller of the two remaining caps.
-        let toFire = Array(sorted.prefix(globalRem))
+        let alreadyFiredToday = db.alertsFiredToday()
+        let cap = Constants.dailyAlertCap
+        guard alreadyFiredToday < cap else { return }
+
+        let remaining = cap - alreadyFiredToday
+        let toFire = Array(sorted.prefix(remaining))
 
         for candidate in toFire {
-            let notifID = UUID().uuidString
-            db.logAlert(
-                itemID: candidate.itemID, storeID: candidate.storeID,
-                type: candidate.type.rawValue, price: candidate.price,
-                saleEventID: candidate.saleEventID, notificationID: notifID
+            // Write to alert_log FIRST — this is the record of intent.
+            // Even if the UNRequest fails (permission denied), the log row
+            // ensures the cap and dedup logic still work correctly.
+            let notificationID = "alert-\(candidate.alertType)-\(candidate.itemID)"
+            db.insertAlertLog(
+                itemID: candidate.itemID,
+                alertType: candidate.alertType,
+                triggerPrice: candidate.triggerPrice,
+                notificationID: notificationID
             )
-            await fireNotification(for: candidate, id: notifID)
+            scheduleNotification(for: candidate, identifier: notificationID)
         }
     }
 
-    // MARK: - Notification delivery
-    private func fireNotification(for candidate: AlertCandidate, id: String) async {
+    // MARK: - evaluateTypeA()
+    // Finds items where today's lowest observed regular price is below the
+    // 90-day rolling average. These are genuine price drops — not sale events.
+    private func evaluateTypeA() -> [AlertCandidate] {
+        let db = DatabaseManager.shared
+        var candidates: [AlertCandidate] = []
+
+        guard db.getSetting(key: "alert_historical_low") == "1" else { return [] }
+
+        for item in db.fetchUserItems() {
+            guard !db.hasAlertFiredForItem(itemID: item.itemID) else { continue }
+
+            let avg = db.rollingAverage90(itemID: item.itemID)
+            guard avg > 0 else { continue }
+
+            guard let currentPrice = db.currentLowestPrice(for: item.itemID),
+                  currentPrice > 0,
+                  currentPrice < avg else { continue }
+
+            let storeName = db.storeNameForCurrentLowestPrice(itemID: item.itemID)
+
+            candidates.append(AlertCandidate(
+                itemID: item.itemID,
+                itemName: item.nameDisplay,
+                alertType: "historical_low",
+                triggerPrice: currentPrice,
+                storeName: storeName,
+                priority: 2
+            ))
+        }
+        return candidates
+    }
+
+    // MARK: - evaluateTypeB()
+    // Finds items that have an active flyer sale at one of the user's selected stores.
+    private func evaluateTypeB() -> [AlertCandidate] {
+        let db = DatabaseManager.shared
+        var candidates: [AlertCandidate] = []
+
+        guard db.getSetting(key: "alert_sale") == "1" else { return [] }
+
+        for item in db.fetchUserItems() {
+            guard !db.hasAlertFiredForItem(itemID: item.itemID) else { continue }
+
+            guard let sale = db.activeSaleForItem(itemID: item.itemID) else { continue }
+
+            let storeName = db.fetchSelectedStores().first(where: { $0.id == sale.storeID })?.name
+
+            candidates.append(AlertCandidate(
+                itemID: item.itemID,
+                itemName: item.nameDisplay,
+                alertType: "sale",
+                triggerPrice: sale.salePrice,
+                storeName: storeName,
+                priority: 3
+            ))
+        }
+        return candidates
+    }
+
+    // MARK: - evaluateTypeC()
+    // Finds items with a sale expiring within Constants.saleExpiryReminderDays.
+    private func evaluateTypeC() -> [AlertCandidate] {
+        let db = DatabaseManager.shared
+        var candidates: [AlertCandidate] = []
+
+        guard db.getSetting(key: "alert_expiry") == "1" else { return [] }
+
+        for item in db.fetchUserItems() {
+            guard !db.hasAlertFiredForItem(itemID: item.itemID) else { continue }
+
+            guard let sale = db.activeSaleForItem(itemID: item.itemID),
+                  let expiresInDays = sale.expiresInDays(),
+                  expiresInDays <= Constants.saleExpiryReminderDays else { continue }
+
+            let storeName = db.fetchSelectedStores().first(where: { $0.id == sale.storeID })?.name
+
+            candidates.append(AlertCandidate(
+                itemID: item.itemID,
+                itemName: item.nameDisplay,
+                alertType: "expiry",
+                triggerPrice: sale.salePrice,
+                storeName: storeName,
+                priority: 4
+            ))
+        }
+        return candidates
+    }
+
+    // MARK: - mergeAndDedup(_:)
+    // When the same item has both a Type A and Type B candidate, merge them
+    // into a single "combined" alert so the user gets one rich notification.
+    private func mergeAndDedup(_ candidates: [AlertCandidate]) -> [AlertCandidate] {
+        var byItem: [Int64: [AlertCandidate]] = [:]
+        for candidate in candidates {
+            byItem[candidate.itemID, default: []].append(candidate)
+        }
+
+        var result: [AlertCandidate] = []
+        for (_, itemCandidates) in byItem {
+            let hasHistoricalLow = itemCandidates.contains { $0.alertType == "historical_low" }
+            let hasSale = itemCandidates.contains { $0.alertType == "sale" }
+
+            if hasHistoricalLow && hasSale {
+                let lowest = itemCandidates.min(by: { $0.triggerPrice < $1.triggerPrice })!
+                result.append(AlertCandidate(
+                    itemID: lowest.itemID,
+                    itemName: lowest.itemName,
+                    alertType: "combined",
+                    triggerPrice: lowest.triggerPrice,
+                    storeName: lowest.storeName,
+                    priority: 1
+                ))
+            } else {
+                if let best = itemCandidates.min(by: { $0.priority < $1.priority }) {
+                    result.append(best)
+                }
+            }
+        }
+        return result
+    }
+
+    // MARK: - scheduleNotification(for:identifier:)
+    // Builds and submits a UNNotificationRequest for the given candidate.
+    // Called after the alert_log row has been written, so this is best-effort.
+    private func scheduleNotification(for candidate: AlertCandidate, identifier: String) {
         let content = UNMutableNotificationContent()
         content.sound = .default
 
-        switch candidate.type {
-        case .historicalLow:
-            content.title = "Price Low — \(candidate.itemName)"
-            let months = candidate.monthsLow.map { "\($0)-month" } ?? "recent"
-            content.body  = "🛒 \(candidate.itemName) at \(candidate.storeName) is at a \(months) low — $\(formatted(candidate.price))"
-        case .sale:
-            content.title = "Sale — \(candidate.itemName)"
-            let wasStr = candidate.regularPrice.map { " (was $\(formatted($0)))" } ?? ""
-            let endStr = candidate.saleEndDate.map { ". Sale ends \(shortDate($0))" } ?? ""
-            content.body  = "🏷️ \(candidate.itemName) is on sale at \(candidate.storeName) — $\(formatted(candidate.price))\(wasStr)\(endStr)"
-        case .expiry:
-            content.title = "Last Chance — \(candidate.itemName)"
-            content.body  = "⏰ \(candidate.itemName) sale at \(candidate.storeName) ends soon. $\(formatted(candidate.price))."
-        case .combined:
-            content.title = "Sale + Low — \(candidate.itemName)"
-            let wasStr = candidate.regularPrice.map { " (was $\(formatted($0)))" } ?? ""
-            let endStr = candidate.saleEndDate.map { ". Sale ends \(shortDate($0))" } ?? ""
-            let months = candidate.monthsLow.map { "\($0)-month" } ?? "recent"
-            content.body  = "🏷️🔥 \(candidate.itemName) at \(candidate.storeName) is on sale AND at a \(months) low — $\(formatted(candidate.price))\(wasStr)\(endStr)"
+        let price = String(format: "$%.2f", candidate.triggerPrice)
+        let store = candidate.storeName ?? "your store"
+
+        switch candidate.alertType {
+        case "historical_low":
+            content.title = "📉 New price low — \(candidate.itemName)"
+            content.body = "\(candidate.itemName) is at a new historical low: \(price) at \(store)"
+        case "sale":
+            content.title = "🏷️ On sale now — \(candidate.itemName)"
+            content.body = "\(candidate.itemName) is on sale at \(store) for \(price)"
+        case "combined":
+            content.title = "📉🏷️ Best price yet — \(candidate.itemName)"
+            content.body = "\(candidate.itemName) hit a new low AND is on sale: \(price) at \(store)"
+        case "expiry":
+            content.title = "⏰ Sale ending soon — \(candidate.itemName)"
+            content.body = "The sale on \(candidate.itemName) at \(store) expires tomorrow (\(price))"
+        default:
+            content.title = "Price alert — \(candidate.itemName)"
+            content.body = "\(candidate.itemName): \(price)"
         }
 
-        let trigger = quietHoursTrigger() ?? UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
-        let request = UNNotificationRequest(identifier: id, content: content, trigger: trigger)
-        do {
-            try await UNUserNotificationCenter.current().add(request)
-        } catch {
-            print("[AlertEngine] Failed to schedule notification \(id): \(error)")
+        let request = UNNotificationRequest(
+            identifier: identifier,
+            content: content,
+            trigger: nil
+        )
+
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                print("[AlertEngine] Notification delivery failed for item \(candidate.itemID): \(error)")
+            }
         }
-    }
-
-    // MARK: - Helpers
-    private var historicalLowThreshold: Double {
-        switch db.getSetting(key: "alert_sensitivity") ?? "balanced" {
-        case "aggressive":   return 0.90
-        case "conservative": return 0.80
-        default:             return 0.85
-        }
-    }
-
-    private func monthsAtLow(price: Double, avg: Double) -> Int {
-        let pctBelow = (avg - price) / avg
-        return max(1, Int(pctBelow / 0.05))
-    }
-
-    private func formatted(_ price: Double) -> String { String(format: "%.2f", price) }
-
-    private func shortDate(_ date: Date) -> String {
-        let f = DateFormatter(); f.dateFormat = "MMM d"; return f.string(from: date)
-    }
-
-    private func quietHoursTrigger() -> UNNotificationTrigger? {
-        let start = db.getSetting(key: "quiet_hours_start") ?? "22:00"
-        let end   = db.getSetting(key: "quiet_hours_end")   ?? "08:00"
-        guard let startMins = parseMins(start), let endMins = parseMins(end) else { return nil }
-        let now     = Calendar.current.dateComponents([.hour, .minute], from: Date())
-        let nowMins = (now.hour ?? 0) * 60 + (now.minute ?? 0)
-        let inQuiet: Bool
-        if startMins > endMins { inQuiet = nowMins >= startMins || nowMins < endMins }
-        else                   { inQuiet = nowMins >= startMins && nowMins < endMins }
-        guard inQuiet else { return nil }
-        var comps = DateComponents()
-        comps.hour = endMins / 60; comps.minute = endMins % 60
-        return UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
-    }
-
-    private func parseMins(_ hhmm: String) -> Int? {
-        let parts = hhmm.split(separator: ":")
-        guard parts.count == 2, let h = Int(parts[0]), let m = Int(parts[1]) else { return nil }
-        return h * 60 + m
     }
 }

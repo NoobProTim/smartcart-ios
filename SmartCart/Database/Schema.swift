@@ -1,118 +1,172 @@
-// Schema.swift — SmartCart/Database/Schema.swift
+// Schema.swift
+// SmartCart — Database/Schema.swift
 //
-// Defines every SQLite table, column, and index for SmartCart.
-// Uses SQLite.swift (stephencelis/SQLite.swift 0.15.x) typed expressions.
-// Call DatabaseManager.shared.runMigrations() once on first launch.
+// Contains two things:
+//   1. Raw SQL DDL strings for all 9 tables (used by DatabaseManager.createTables())
+//   2. Schema.defaultSettings — the seed rows written to user_settings on first launch
 //
-// IMPORTANT: Do not change column names without also updating
-// DatabaseManager.swift and the corresponding Swift Model struct.
+// UPDATED IN TASK #3 (P1-2):
+// Removed daily_alert_count and daily_alert_date from defaultSettings.
+// These were seeded but never incremented, creating a false second source of
+// truth for the daily alert cap. The cap is now enforced exclusively by
+// DatabaseManager.alertsFiredToday() which counts alert_log rows.
+// See Constants.dailyAlertCap for the authoritative cap value.
 
 import Foundation
-import SQLite
 
-// MARK: - Table declarations
+enum Schema {
 
-let storesTable          = Table("stores")
-let itemsTable           = Table("items")
-let userItemsTable       = Table("user_items")
-let purchaseHistoryTable = Table("purchase_history")
-let priceHistoryTable    = Table("price_history")
-let flyerSalesTable      = Table("flyer_sales")
-let alertLogTable        = Table("alert_log")
-let userStoresTable      = Table("user_stores")
-let userSettingsTable    = Table("user_settings")
+    // MARK: - Table: stores
+    // One row per grocery chain. isSelected drives Flipp search scope.
+    static let createStores = """
+        CREATE TABLE IF NOT EXISTS stores (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            name            TEXT    NOT NULL UNIQUE,
+            flipp_id        TEXT,
+            is_selected     INTEGER NOT NULL DEFAULT 0,
+            last_synced_at  TEXT
+        )
+    """
 
-// MARK: - stores columns
-let storeID         = Expression<Int64>("id")
-let storeName       = Expression<String>("name")
-let storeLogoURL    = Expression<String?>("logo_url")
-let storeFlippID    = Expression<String?>("flipp_id")
-let storeIsSelected = Expression<Int64>("is_selected")
-let storeLastSynced = Expression<Date?>("last_synced_at")
+    // MARK: - Table: items
+    // Canonical product catalogue. name_normalised is the dedup key.
+    static let createItems = """
+        CREATE TABLE IF NOT EXISTS items (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            name_normalised   TEXT    NOT NULL UNIQUE,
+            name_display      TEXT    NOT NULL,
+            category          TEXT,
+            unit              TEXT,
+            created_at        TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """
 
-// MARK: - items columns
-let itemID             = Expression<Int64>("id")
-let itemNameNormalised = Expression<String>("name_normalised")
-let itemNameDisplay    = Expression<String>("name_display")
-let itemCategory       = Expression<String?>("category")
-let itemUnit           = Expression<String?>("unit")
-let itemCreatedAt      = Expression<Date>("created_at")
+    // MARK: - Table: user_items
+    // The user's personal Smart List — one row per tracked item.
+    // Replenishment data lives here: last purchase date, inferred cycle,
+    // user override, next restock date.
+    static let createUserItems = """
+        CREATE TABLE IF NOT EXISTS user_items (
+            id                        INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id                   INTEGER NOT NULL UNIQUE REFERENCES items(id),
+            last_purchased_date       TEXT,
+            last_purchased_price      REAL,
+            inferred_cycle_days       INTEGER,
+            user_override_cycle_days  INTEGER,
+            next_restock_date         TEXT,
+            has_active_alert          INTEGER NOT NULL DEFAULT 0
+        )
+    """
 
-// MARK: - user_items columns
-let userItemID                  = Expression<Int64>("id")
-let userItemsItemID             = Expression<Int64>("item_id")
-let userItemsAddedDate          = Expression<Date>("added_date")
-let userItemsLastPurchasedDate  = Expression<Date?>("last_purchased_date")
-let userItemsLastPurchasedPrice = Expression<Double?>("last_purchased_price")
-let userItemsLastStoreID        = Expression<Int64?>("last_purchased_store_id")
-let userItemsReplenishInferred  = Expression<Int64?>("replenishment_inferred")
-let userItemsReplenishOverride  = Expression<Int64?>("replenishment_override")
-let userItemsNextRestockDate    = Expression<Date?>("next_restock_date")
-let userItemsIsActive           = Expression<Int64>("is_active")
-/// 0 = normal, 1 = irregular purchase pattern — suppresses restock alerts.
-/// Added in migration M2. Use applyM2Migration() in runMigrations().
-let userItemsIsSeasonal         = Expression<Int64?>("is_seasonal")
+    // MARK: - Table: purchase_history
+    // One row per confirmed purchase event.
+    // ALWAYS written via DatabaseManager.markPurchased() — never INSERT directly.
+    // source must be "receipt" or "manual".
+    static let createPurchaseHistory = """
+        CREATE TABLE IF NOT EXISTS purchase_history (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id      INTEGER NOT NULL REFERENCES items(id),
+            purchased_at TEXT    NOT NULL DEFAULT (datetime('now')),
+            price        REAL,
+            source       TEXT    NOT NULL DEFAULT 'receipt',
+            store_id     INTEGER REFERENCES stores(id)
+        )
+    """
 
-// MARK: - purchase_history columns
-let purchaseID     = Expression<Int64>("id")
-let purchaseItemID = Expression<Int64>("item_id")
-let purchaseStoreID = Expression<Int64?>("store_id")
-let purchasePrice  = Expression<Double?>("price")
-let purchasedAt    = Expression<Date>("purchased_at")
-let purchaseSource = Expression<String>("source")
-/// Number of units bought in one purchase. Added in migration M2.
-/// Defaults to 1. ReplenishmentEngine scales the restock clock by this value.
-let purchaseQty    = Expression<Int64>("qty")
+    // MARK: - Table: price_history
+    // Regular shelf prices only. Sale prices belong in flyer_sales.
+    // Keeping them separate lets AlertEngine distinguish a genuine price
+    // drop (historical low) from a temporary sale event.
+    static let createPriceHistory = """
+        CREATE TABLE IF NOT EXISTS price_history (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id     INTEGER NOT NULL REFERENCES items(id),
+            store_id    INTEGER NOT NULL REFERENCES stores(id),
+            price       REAL    NOT NULL,
+            observed_at TEXT    NOT NULL DEFAULT (datetime('now')),
+            source      TEXT    NOT NULL DEFAULT 'flipp'
+        )
+    """
 
-// MARK: - price_history columns
-let priceHistID       = Expression<Int64>("id")
-let priceHistItemID   = Expression<Int64>("item_id")
-let priceHistStoreID  = Expression<Int64>("store_id")
-let priceHistPrice    = Expression<Double>("price")
-let priceHistDate     = Expression<Date>("observed_at")
-let priceHistSource   = Expression<String>("source")
+    // MARK: - Table: flyer_sales
+    // Active and historical sale/flyer events from Flipp.
+    // Has a UNIQUE index (item_id, store_id, sale_start_date, sale_price)
+    // so INSERT OR IGNORE prevents duplicate rows on daily sync.
+    static let createFlyerSales = """
+        CREATE TABLE IF NOT EXISTS flyer_sales (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id         INTEGER NOT NULL REFERENCES items(id),
+            store_id        INTEGER NOT NULL REFERENCES stores(id),
+            sale_price      REAL    NOT NULL,
+            sale_start_date TEXT    NOT NULL,
+            sale_end_date   TEXT,
+            source          TEXT    NOT NULL DEFAULT 'flipp',
+            fetched_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """
 
-// MARK: - flyer_sales columns
-let flyerID        = Expression<Int64>("id")
-let flyerItemID    = Expression<Int64>("item_id")
-let flyerStoreID   = Expression<Int64>("store_id")
-let flyerSalePrice = Expression<Double>("sale_price")
-let flyerRegularPrice = Expression<Double?>("regular_price")
-let flyerStartDate = Expression<Date>("sale_start_date")
-let flyerEndDate   = Expression<Date?>("sale_end_date")
-let flyerSource    = Expression<String>("source")
-let flyerFetchedAt = Expression<Date>("fetched_at")
+    // Unique index that prevents duplicate sale rows on daily sync.
+    // Applied in DatabaseManager.runMigrations().
+    static let createFlyerSalesUniqueIndex = """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_flyer_unique
+        ON flyer_sales(item_id, store_id, sale_start_date, sale_price)
+    """
 
-// MARK: - alert_log columns
-let alertID        = Expression<Int64>("id")
-let alertItemID    = Expression<Int64>("item_id")
-let alertStoreID   = Expression<Int64>("store_id")
-let alertType      = Expression<String>("alert_type")
-let alertPrice     = Expression<Double>("price")
-let alertFiredAt   = Expression<Date>("fired_at")
-let alertSaleEventID = Expression<Int64?>("sale_event_id")
-let alertNotifID   = Expression<String?>("notification_id")
+    // MARK: - Table: alert_log
+    // Written BEFORE calling UNUserNotificationCenter — this means the daily
+    // cap and dedup checks work correctly even when notifications are denied.
+    static let createAlertLog = """
+        CREATE TABLE IF NOT EXISTS alert_log (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_id          INTEGER NOT NULL REFERENCES items(id),
+            alert_type       TEXT    NOT NULL,
+            trigger_price    REAL    NOT NULL,
+            fired_at         TEXT    NOT NULL DEFAULT (datetime('now')),
+            notification_id  TEXT
+        )
+    """
 
-// MARK: - user_settings columns
-let settingKey   = Expression<String>("key")
-let settingValue = Expression<String?>("value")
+    // MARK: - Table: user_stores
+    // Join between user and stores table.
+    // ⚠️ P2-3: This table is currently NOT written during onboarding.
+    // Store selection is tracked via user_settings keys ("store_selected_{id}").
+    // Do not read from user_stores in production code until P2-3 is resolved.
+    static let createUserStores = """
+        CREATE TABLE IF NOT EXISTS user_stores (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            store_id   INTEGER NOT NULL UNIQUE REFERENCES stores(id),
+            added_at   TEXT    NOT NULL DEFAULT (datetime('now'))
+        )
+    """
 
-// MARK: - Default settings seed values
-// These are inserted once on first launch by DatabaseManager.seedDefaultSettings().
-let defaultSettings: [(String, String?)] = [
-    ("notification_enabled",        "1"),
-    ("alert_sensitivity",           "balanced"),
-    ("quiet_hours_start",           "22:00"),
-    ("quiet_hours_end",             "08:00"),
-    ("last_price_refresh",          nil),
-    // NOTE: daily_alert_count and daily_alert_date are intentionally omitted.
-    // Daily alert cap is enforced by counting alert_log rows where fired_at = today.
-    // Do NOT track separately in user_settings.
-    ("user_postal_code",            nil),
-    ("sale_alerts_enabled",         "1"),
-    ("flyer_expiry_reminder",       "1"),
-    ("expiry_reminder_days_before", "1"),
-    ("sale_alert_restock_only",     "1"),
-    ("min_discount_threshold",      "0"),
-    ("onboarding_complete",         "0")
-]
+    // MARK: - Table: user_settings
+    // Key-value store for all user preferences and app state flags.
+    static let createUserSettings = """
+        CREATE TABLE IF NOT EXISTS user_settings (
+            key    TEXT PRIMARY KEY,
+            value  TEXT NOT NULL
+        )
+    """
+
+    // MARK: - Default Settings
+    // Seed rows written to user_settings on first launch.
+    //
+    // ⚠️ REMOVED IN TASK #3 (P1-2):
+    // "daily_alert_count" and "daily_alert_date" have been removed.
+    // Those fields were seeded here but never updated, creating a stale
+    // second source of truth that could be misread by future code.
+    // The daily cap is now enforced ONLY by DatabaseManager.alertsFiredToday().
+    // See Constants.dailyAlertCap for the cap value.
+    static let defaultSettings: [String: String] = [
+        "onboarding_complete":      "0",
+        "notification_enabled":     "0",
+        "max_daily_alerts":         String(Constants.dailyAlertCap),
+        "alert_historical_low":     "1",
+        "alert_sale":               "1",
+        "alert_expiry":             "1",
+        "user_postal_code":         "",
+        "last_price_refresh":       ""
+        // daily_alert_count → REMOVED (P1-2). Use alertsFiredToday() instead.
+        // daily_alert_date  → REMOVED (P1-2). Use alertsFiredToday() instead.
+    ]
+}

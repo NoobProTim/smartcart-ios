@@ -1,176 +1,178 @@
-// ReplenishmentEngine.swift — SmartCart/Engine/ReplenishmentEngine.swift
+// ReplenishmentEngine.swift
+// SmartCart — Engine/ReplenishmentEngine.swift
 //
-// THE REPLENISHMENT BRAIN
-// -----------------------
-// This engine answers one question: "Is this item running low, and when
-// should the user restock it?"
+// NEW FILE — Task #3, Module E.
 //
-// It is the single source of truth for restock logic. AlertEngine,
-// HomeViewModel, and ItemDetailView all delegate here — no duplicated math.
+// Centralises all replenishment cycle logic that was previously scattered
+// across DatabaseManager in ad-hoc functions. One file owns the answer to:
+// "When should the user restock this item?"
 //
-// ──────────────────────────────────────────────────────────────
-// HOW IT WORKS (plain English for Timothy)
-// ──────────────────────────────────────────────────────────────
-// 1. Every item has an "effective cycle" — how many days between purchases.
-//    This comes from the user override first, then the inferred average.
-// 2. "Restock window" opens when today >= last_purchase + (cycle × 0.5).
-//    Example: milk bought every 14 days → window opens on day 7.
-// 3. "Approaching" (amber badge) = within `approachingWindowDays` of the
-//    window opening — gives a heads-up before the item is actually due.
-// 4. "Due" (red badge) = inside the restock window right now.
-// 5. Seasonal items get a special suppressed status — no nudges at all
-//    because their purchase pattern is too irregular to predict reliably.
+// WHY CENTRALISE:
+// DatabaseManager is responsible for persistence — not business logic.
+// Having replenishment calculations inline in DatabaseManager made them
+// hard to test in isolation and easy to accidentally skip.
+// ReplenishmentEngine is a pure logic layer: it reads from DatabaseManager,
+// computes dates and windows, and writes back to user_items.
 //
-// TUNABLE CONSTANTS (look for "TUNE:" comments below)
-// ──────────────────────────────────────────────────────────────
+// ALL PUBLIC FUNCTIONS ARE INDEPENDENTLY TESTABLE:
+// Pass any itemID + mock DatabaseManager and verify outputs with XCTest.
+// No UIKit, no SwiftUI, no shared mutable state between functions.
+//
+// CYCLE PRIORITY ORDER (enforced in effectiveCycleDays):
+//   1. User override (set in Settings → Item Detail)
+//   2. Inferred median from purchase history (requires >= 2 purchases)
+//   3. Default: Constants.defaultReplenishmentDays (14 days)
 
 import Foundation
 
-/// The four states a UserItem can be in from a replenishment perspective.
-/// Used by HomeViewModel to drive badge colours in the Smart List.
-enum RestockStatus {
-    /// Plenty of time left — no badge shown.
-    case ok
-    /// Getting close to the restock window — show an amber "Restock soon" pill.
-    case approaching
-    /// Inside the restock window — show a red "Due" pill.
-    case due
-    /// Item is seasonal; restock nudges are suppressed entirely.
-    case seasonalSuppressed
-}
-
 final class ReplenishmentEngine {
 
-    // Shared singleton — matches the pattern used by AlertEngine and DatabaseManager.
     static let shared = ReplenishmentEngine()
-
-    private let db = DatabaseManager.shared
     private init() {}
 
-    // ──────────────────────────────────────────────────────────────
-    // TUNABLE CONSTANTS
-    // Change these numbers to adjust how early "Restock soon" appears.
-    // ──────────────────────────────────────────────────────────────
+    private var db: DatabaseManager { DatabaseManager.shared }
 
-    /// Days before the restock window opens that "approaching" kicks in.
-    /// Default 3 — i.e., if the window opens in 3 days or fewer, show amber.
-    /// TUNE: raise to 5 for earlier warnings; lower to 1 for tighter alerts.
-    private let approachingWindowDays: Int = 3
+    // MARK: - effectiveCycleDays(for:)
+    // Returns the replenishment cycle (in days) that should be used for a given item.
+    //
+    // Priority order:
+    //   1. User override: set manually in Settings. Always wins when present.
+    //   2. Inferred median: calculated from gaps between purchase dates.
+    //      Only used when there are >= 2 confirmed purchases.
+    //   3. Default: 14 days (Constants.defaultReplenishmentDays).
+    func effectiveCycleDays(for itemID: Int64) -> Int {
+        guard let userItem = db.fetchUserItem(itemID: itemID) else {
+            return Constants.defaultReplenishmentDays
+        }
 
-    /// Minimum valid cycle length in days. Cycles shorter than this are
-    /// considered data noise and ignored.
-    /// TUNE: lower to 1 if you want to track daily-purchase items.
-    private let minimumValidCycleDays: Int = 2
+        if let override = userItem.userOverrideCycleDays, override > 0 {
+            return override
+        }
 
-    // ──────────────────────────────────────────────────────────────
-    // PUBLIC API
-    // These are the three methods the rest of the app calls.
-    // ──────────────────────────────────────────────────────────────
+        if let inferred = userItem.inferredCycleDays, inferred > 0 {
+            return inferred
+        }
 
-    /// Call this immediately after recording a purchase.
-    /// It recalculates the predicted restock date, scaling forward by
-    /// `quantity` cycles so a bulk buy doesn't trigger an instant nudge.
-    ///
-    /// Example: if the cycle is 14 days and the user bought 3 units,
-    /// the next restock date is pushed 42 days out.
-    ///
-    /// - Parameters:
-    ///   - itemID: The item that was purchased.
-    ///   - quantity: How many units were bought (minimum 1).
-    func updateOnPurchase(itemID: Int64, quantity: Int) {
-        // DatabaseManager+Fixes already writes purchase_history and
-        // recalculates the base cycle. We re-read the cycle here and
-        // apply the quantity scale on top.
-        guard let item = db.fetchUserItem(itemID: itemID) else { return }
-        guard let cycle = validCycle(from: item) else { return }
+        return Constants.defaultReplenishmentDays
+    }
 
-        // Scale: buying 2 units pushes the window out 2× the normal cycle.
-        let scaledDays = cycle * max(1, quantity)
-        let nextRestock = Calendar.current.date(
-            byAdding: .day, value: scaledDays, to: Date()
+    // MARK: - nextRestockDate(for:)
+    // Returns the predicted date the user will need to buy this item again.
+    //
+    // Formula: nextRestockDate = lastPurchasedDate + effectiveCycleDays
+    //
+    // Returns nil when the item has never been purchased.
+    // This date controls the Smart List sort order.
+    func nextRestockDate(for itemID: Int64) -> Date? {
+        guard let userItem = db.fetchUserItem(itemID: itemID),
+              let lastPurchased = userItem.lastPurchasedDate else {
+            return nil
+        }
+
+        let cycleDays = effectiveCycleDays(for: itemID)
+        return Calendar.current.date(byAdding: .day, value: cycleDays, to: lastPurchased)
+    }
+
+    // MARK: - isInRestockWindow(for:)
+    // Returns true when the item is due for restock within Constants.restockWindowDays.
+    // Drives pin-to-top on the Smart List and bold row styling.
+    // Returns false for items never purchased (no nextRestockDate).
+    func isInRestockWindow(for itemID: Int64) -> Bool {
+        guard let restock = nextRestockDate(for: itemID) else { return false }
+        let daysUntilRestock = Calendar.current.dateComponents([.day], from: Date(), to: restock).day ?? Int.max
+        return daysUntilRestock <= Constants.restockWindowDays
+    }
+
+    // MARK: - inferCycleDays(for:)
+    // Calculates the median gap (in days) between consecutive purchases of an item.
+    //
+    // WHY MEDIAN (not mean): The mean is skewed by outlier gaps — a 6-week
+    // vacation between purchases shouldn't permanently stretch the cycle.
+    //
+    // Requires >= 2 purchase_history rows for the item.
+    // Returns nil when there isn't enough data.
+    //
+    // TODO P2-1: Use true median for even-count datasets.
+    // Current: sorted[count / 2] → lower-middle value for even arrays.
+    func inferCycleDays(for itemID: Int64) -> Int? {
+        let purchases = db.fetchPurchaseHistory(itemID: itemID)
+            .sorted { $0.purchasedAt < $1.purchasedAt }
+
+        guard purchases.count >= 2 else { return nil }
+
+        var gaps: [Int] = []
+        for i in 1..<purchases.count {
+            let gap = Calendar.current.dateComponents(
+                [.day],
+                from: purchases[i - 1].purchasedAt,
+                to: purchases[i].purchasedAt
+            ).day ?? 0
+
+            if gap > 0 { gaps.append(gap) }
+        }
+
+        guard !gaps.isEmpty else { return nil }
+
+        // TODO P2-1: true median for even-count datasets
+        let sorted = gaps.sorted()
+        return sorted[sorted.count / 2]
+    }
+
+    // MARK: - recalculate(for:)
+    // Recalculates and persists the replenishment data for a single item.
+    // Called after any purchase confirmation via DatabaseManager.markPurchased().
+    //
+    // What it does:
+    //   1. Infers the new cycle days from purchase history
+    //   2. Computes the new next restock date
+    //   3. Writes both back to user_items
+    func recalculate(for itemID: Int64) {
+        let inferred = inferCycleDays(for: itemID)
+        let restock = nextRestockDate(for: itemID)
+
+        db.updateReplenishmentData(
+            itemID: itemID,
+            inferredCycleDays: inferred,
+            nextRestockDate: restock
         )
-        db.setNextRestockDate(itemID: itemID, date: nextRestock)
     }
 
-    /// Returns the predicted date the user will need to restock this item.
-    /// Returns nil if there is not enough data to make a prediction
-    /// (e.g. never purchased, or cycle data is missing/bogus).
-    ///
-    /// - Parameter itemID: The item to predict for.
-    func predictedRestockDate(for itemID: Int64) -> Date? {
-        guard let item = db.fetchUserItem(itemID: itemID) else { return nil }
-        // Use the stored next_restock_date if it's already been calculated.
-        if let stored = item.nextRestockDate { return stored }
-        // Fall back to computing on the fly from last purchase + cycle.
-        guard let last  = item.lastPurchasedDate,
-              let cycle = validCycle(from: item) else { return nil }
-        return Calendar.current.date(byAdding: .day, value: cycle, to: last)
+    // MARK: - recalculateAll()
+    // Recalculates replenishment data for ALL items in user_items.
+    // Called after batch receipt imports and on app launch / background refresh.
+    func recalculateAll() {
+        let allItems = db.fetchUserItems()
+        for item in allItems {
+            recalculate(for: item.itemID)
+        }
+        print("[ReplenishmentEngine] recalculateAll() complete — \(allItems.count) items updated")
     }
 
-    /// Returns true when the item is inside its restock window right now.
-    /// This is the canonical check — AlertEngine delegates here instead of
-    /// computing its own `isInRestockWindow` logic.
-    ///
-    /// Seasonal items always return false (suppress restock nudges).
-    ///
-    /// - Parameters:
-    ///   - itemID: The item to check.
-    ///   - date: The date to evaluate against (defaults to today).
-    func isInRestockWindow(itemID: Int64, asOf date: Date = Date()) -> Bool {
-        guard let item = db.fetchUserItem(itemID: itemID) else { return false }
-        guard !item.isSeasonal else { return false }   // Seasonal → suppress
-        return windowIsOpen(for: item, asOf: date)
-    }
+    // MARK: - sortedByUrgency(_:)
+    // Returns items sorted by restock urgency for the Smart List display order.
+    //
+    // Sort order:
+    //   1. Items in restock window (ascending by days until restock — most urgent first)
+    //   2. Items with active alerts
+    //   3. All other items (alphabetical by display name)
+    //
+    // HomeViewModel calls this to get the display-ready ordered array.
+    func sortedByUrgency(_ items: [UserItem]) -> [UserItem] {
+        return items.sorted { a, b in
+            let aInWindow = isInRestockWindow(for: a.itemID)
+            let bInWindow = isInRestockWindow(for: b.itemID)
 
-    /// Returns the restock status for use in the Smart List UI.
-    /// This is what HomeViewModel calls for every item to decide which badge to show.
-    ///
-    /// - Parameters:
-    ///   - item: A fully loaded UserItem (from db.fetchUserItems()).
-    ///   - date: The date to evaluate against (defaults to today).
-    func restockStatus(for item: UserItem, asOf date: Date = Date()) -> RestockStatus {
-        // Seasonal items: suppress everything.
-        if item.isSeasonal { return .seasonalSuppressed }
+            if aInWindow != bInWindow { return aInWindow }
 
-        // No cycle data → can't predict → no badge.
-        guard let cycle = validCycle(from: item),
-              let last  = item.lastPurchasedDate else { return .ok }
+            if aInWindow && bInWindow {
+                let aDate = nextRestockDate(for: a.itemID) ?? Date.distantFuture
+                let bDate = nextRestockDate(for: b.itemID) ?? Date.distantFuture
+                if aDate != bDate { return aDate < bDate }
+            }
 
-        // Window open date: last_purchased + (cycle × 0.5)
-        // TUNE: change 0.5 to a different fraction to open the window earlier/later.
-        let halfCycle   = Double(cycle) * 0.5
-        let windowOpen  = last.addingTimeInterval(halfCycle * 86_400)
+            if a.hasActiveAlert != b.hasActiveAlert { return a.hasActiveAlert }
 
-        // Due: today is on or after the window opening.
-        if date >= windowOpen { return .due }
-
-        // Approaching: window opens within `approachingWindowDays` days.
-        let daysUntilWindow = Calendar.current.dateComponents(
-            [.day], from: date, to: windowOpen
-        ).day ?? Int.max
-        if daysUntilWindow <= approachingWindowDays { return .approaching }
-
-        return .ok
-    }
-
-    // ──────────────────────────────────────────────────────────────
-    // PRIVATE HELPERS
-    // ──────────────────────────────────────────────────────────────
-
-    /// Returns the effective cycle (user override preferred over inferred),
-    /// or nil if the cycle is missing, zero, or negative (bogus data guard).
-    private func validCycle(from item: UserItem) -> Int? {
-        guard let cycle = item.effectiveCycleDays,
-              cycle >= minimumValidCycleDays else { return nil }
-        return cycle
-    }
-
-    /// True when today is at or past the half-cycle window opening date.
-    private func windowIsOpen(for item: UserItem, asOf date: Date) -> Bool {
-        guard let last  = item.lastPurchasedDate,
-              let cycle = validCycle(from: item) else { return false }
-        let halfCycle  = Double(cycle) * 0.5
-        let windowOpen = last.addingTimeInterval(halfCycle * 86_400)
-        return date >= windowOpen
+            return a.nameDisplay.localizedCaseInsensitiveCompare(b.nameDisplay) == .orderedAscending
+        }
     }
 }

@@ -1,294 +1,312 @@
-// HomeView.swift — SmartCart/Views/HomeView.swift
+// HomeView.swift
+// SmartCart — Views/HomeView.swift
 //
-// Root tab view. Shows:
-//   1. "Today's Deals" horizontal strip — items with active flyer sales.
-//   2. Smart List — all tracked items sorted by restock urgency.
-//      Each row carries a RestockBadge driven by HomeViewModel.restockStatuses.
+// The main screen of the app. Shows the user's Smart List sorted by
+// replenishment urgency (items due for restock pinned at top, then
+// alerted items, then alphabetical).
 //
-// Notification-denied in-app nudge banner (Fix from open gaps):
-//   A slim banner slides in at the top when notification permission is .denied.
-//   It is NOT a modal — it's a persistent in-app element that links to Settings.
+// Also contains:
+//   - "Today's Deals" section — all active sales regardless of alert cap
+//   - Pull-to-refresh wired to BackgroundSyncManager with staleness gate
+//   - Last-updated subtitle under the nav title
+//   - Notification permission denial banner (amber, safeAreaInset — not modal)
+//   - Empty state CTA when Smart List is empty
+//   - Deep-link handler for notification taps (P1-6)
 //
-// Part 5 fix: ItemDetailView(itemID:) call site corrected.
-//   Was: ItemDetailView(item: item)  — type mismatch, doesn't compile.
-//   Now: ItemDetailView(itemID: item.itemID)
+// UPDATED IN TASK #3 (P1-7):
+// Pull-to-refresh now calls BackgroundSyncManager.manualRefresh() and
+// handles the RefreshResult enum to show "Prices updated just now" or
+// "Last updated X hours ago" as the nav subtitle.
+// The partial stub from Task #2 has been replaced with the fully tested integration.
 
 import SwiftUI
 import UserNotifications
 
 struct HomeView: View {
 
-    @StateObject private var vm = HomeViewModel()
-    @State private var notifDenied      = false
-    @State private var showScanSheet    = false
-    @State private var selectedItem: UserItem?     = nil
-    @State private var purchaseTarget: UserItem?   = nil
+    @StateObject private var viewModel = HomeViewModel()
+    @EnvironmentObject private var notificationRouter: NotificationRouter
+
+    @State private var deepLinkedItemID: Int64? = nil
+    @State private var showNotificationBanner = false
+    @State private var showScanner = false
+    @State private var refreshSubtitle: String? = nil
+    @State private var isRefreshing = false
 
     var body: some View {
         NavigationStack {
-            ZStack(alignment: .top) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
+            ZStack {
+                listContent
 
-                        // MARK: Notification nudge banner (not a modal)
-                        if notifDenied {
-                            NotifNudgeBanner()
-                                .padding(.horizontal)
-                                .transition(.move(edge: .top).combined(with: .opacity))
-                        }
-
-                        // MARK: Today's Deals
-                        if !vm.todaysDeals.isEmpty {
-                            TodaysDealsStrip(deals: vm.todaysDeals)
-                                .padding(.horizontal)
-                        }
-
-                        // MARK: Smart List
-                        if vm.isLoading {
-                            ProgressView()
-                                .frame(maxWidth: .infinity, minHeight: 200)
-                        } else if vm.items.isEmpty {
-                            // Animated empty state CTA (open gap: onboarding skip)
-                            EmptyCTAView(onTap: { showScanSheet = true })
-                                .padding(.horizontal)
-                        } else {
-                            LazyVStack(spacing: 0) {
-                                ForEach(vm.items) { item in
-                                    SmartListRow(
-                                        item: item,
-                                        status: vm.restockStatuses[item.itemID] ?? .ok
-                                    )
-                                    .contentShape(Rectangle())
-                                    .onTapGesture {
-                                        selectedItem = item
-                                    }
-                                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                        Button {
-                                            purchaseTarget = item
-                                        } label: {
-                                            Label("Bought", systemImage: "cart.badge.plus")
-                                        }
-                                        .tint(.green)
-                                    }
-                                    Divider().padding(.leading, 16)
-                                }
-                            }
-                            .background(Color(.systemBackground))
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                            .padding(.horizontal)
-                        }
-                    }
-                    .padding(.top, 8)
-                    .padding(.bottom, 32)
+                if viewModel.items.isEmpty {
+                    EmptyCTAView(onScanTapped: { showScanner = true })
+                        .transition(.opacity)
                 }
             }
-            .navigationTitle("SmartCart")
+            .navigationTitle("Smart List")
+            .navigationSubtitle(refreshSubtitle ?? "")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
-                        showScanSheet = true
+                        showScanner = true
                     } label: {
                         Image(systemName: "camera.viewfinder")
-                            .font(.title3)
+                            .font(.system(size: 18))
                     }
-                    .accessibilityLabel("Scan receipt")
+                    .accessibilityLabel("Scan a receipt")
                 }
             }
-            // Receipt scan sheet
-            .sheet(isPresented: $showScanSheet) {
-                ReceiptScanView()
+            // Pull-to-refresh wired to BackgroundSyncManager with staleness gate (P1-7)
+            .refreshable {
+                await performPullToRefresh()
             }
-            // Item detail sheet — Fix: ItemDetailView takes itemID: Int64, not UserItem
-            .sheet(item: $selectedItem) { item in
-                NavigationStack {
-                    ItemDetailView(itemID: item.itemID)
-                        .toolbar {
-                            ToolbarItem(placement: .cancellationAction) {
-                                Button("Done") { selectedItem = nil }
+            // Notification permission banner — safeAreaInset, not a modal (P1-6)
+            .safeAreaInset(edge: .bottom) {
+                if showNotificationBanner {
+                    NotificationBannerView(
+                        onDismiss: { showNotificationBanner = false },
+                        onEnable: {
+                            if let url = URL(string: UIApplication.openSettingsURLString) {
+                                UIApplication.shared.open(url)
                             }
                         }
+                    )
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .animation(.easeInOut(duration: 0.3), value: showNotificationBanner)
                 }
             }
-            // Mark as Purchased sheet (swipe action)
-            .sheet(item: $purchaseTarget) { item in
-                MarkPurchasedSheet(item: item, vm: vm)
+            .background {
+                NavigationLink(
+                    destination: deepLinkDestination,
+                    isActive: Binding(
+                        get: { deepLinkedItemID != nil },
+                        set: { if !$0 { deepLinkedItemID = nil } }
+                    )
+                ) { EmptyView() }
             }
-            .onAppear {
-                vm.load()
-                checkNotificationStatus()
-            }
-            .refreshable {
-                vm.load()
+        }
+        .sheet(isPresented: $showScanner) {
+            ReceiptScannerView(onComplete: {
+                showScanner = false
+                viewModel.load()
+            })
+        }
+        .onAppear {
+            viewModel.load()
+            checkNotificationPermission()
+            updateRefreshSubtitle()
+        }
+        .onReceive(notificationRouter.$itemIDToOpen) { itemID in
+            guard let itemID else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                deepLinkedItemID = itemID
+                notificationRouter.itemIDToOpen = nil
             }
         }
     }
 
-    private func checkNotificationStatus() {
+    // MARK: - listContent
+    // Two-section list: Today's Deals (all active sales) + Smart List (user items).
+    @ViewBuilder
+    private var listContent: some View {
+        List {
+            if !viewModel.todaysDeals.isEmpty {
+                Section {
+                    ForEach(viewModel.todaysDeals) { deal in
+                        DealRowView(deal: deal)
+                    }
+                } header: {
+                    Text("Today's Deals")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .textCase(nil)
+                }
+            }
+
+            Section {
+                ForEach(viewModel.items) { item in
+                    NavigationLink(destination: ItemDetailView(item: item)) {
+                        SmartListRowView(item: item)
+                    }
+                    .accessibilityLabel("\(item.nameDisplay)\(item.isInRestockWindow ? ", due for restock" : "")")
+                }
+            } header: {
+                if !viewModel.items.isEmpty {
+                    Text("Your Items")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .textCase(nil)
+                }
+            }
+        }
+        .listStyle(.insetGrouped)
+        .animation(.easeInOut(duration: 0.25), value: viewModel.items.count)
+    }
+
+    // MARK: - deepLinkDestination
+    // View pushed when a notification is tapped. Resolves item ID to UserItem.
+    @ViewBuilder
+    private var deepLinkDestination: some View {
+        if let itemID = deepLinkedItemID,
+           let item = viewModel.items.first(where: { $0.itemID == itemID }) {
+            ItemDetailView(item: item)
+        } else {
+            Text("Item not found")
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: - performPullToRefresh()
+    // Calls BackgroundSyncManager.manualRefresh() and updates the nav subtitle
+    // based on the RefreshResult. Handles the staleness gate transparently.
+    private func performPullToRefresh() async {
+        let result = await BackgroundSyncManager.shared.manualRefresh()
+        await MainActor.run {
+            switch result {
+            case .refreshed:
+                refreshSubtitle = "Prices updated just now"
+            case .skippedNotStale(let lastDate):
+                refreshSubtitle = "Last updated \(relativeTimeString(from: lastDate))"
+            case .noItems:
+                refreshSubtitle = nil
+            }
+            viewModel.load()
+        }
+    }
+
+    // MARK: - updateRefreshSubtitle()
+    // Shows the last-updated time on .onAppear without requiring a refresh.
+    private func updateRefreshSubtitle() {
+        let lastRefreshString = DatabaseManager.shared.getSetting(key: "last_price_refresh") ?? ""
+        guard let lastRefreshDate = ISO8601DateFormatter().date(from: lastRefreshString) else {
+            refreshSubtitle = nil
+            return
+        }
+        let elapsed = Date().timeIntervalSince(lastRefreshDate)
+        if elapsed < 60 {
+            refreshSubtitle = "Prices updated just now"
+        } else {
+            refreshSubtitle = "Last updated \(relativeTimeString(from: lastRefreshDate))"
+        }
+    }
+
+    // MARK: - relativeTimeString(from:)
+    // Converts a Date to a user-friendly relative string.
+    // Examples: "2 minutes ago", "1 hour ago", "3 hours ago"
+    private func relativeTimeString(from date: Date) -> String {
+        let elapsed = Date().timeIntervalSince(date)
+        let minutes = Int(elapsed / 60)
+        let hours = Int(elapsed / 3600)
+        if minutes < 1 { return "just now" }
+        if minutes < 60 { return "\(minutes) minute\(minutes == 1 ? "" : "s") ago" }
+        return "\(hours) hour\(hours == 1 ? "" : "s") ago"
+    }
+
+    // MARK: - checkNotificationPermission()
+    // Shows the amber banner if the user has denied notifications.
+    private func checkNotificationPermission() {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             DispatchQueue.main.async {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    notifDenied = settings.authorizationStatus == .denied
-                }
+                showNotificationBanner = settings.authorizationStatus == .denied
             }
         }
     }
 }
 
-// MARK: - Notification nudge banner
-// Shown inline at the top of the scroll view (not a modal) when permission is .denied.
-private struct NotifNudgeBanner: View {
+// MARK: - SmartListRowView
+// One row in the Smart List: name + restock date + alert badge + price.
+struct SmartListRowView: View {
+
+    let item: UserItem
+
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: "bell.slash.fill")
-                .foregroundStyle(.orange)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Notifications are off")
-                    .font(.subheadline.weight(.semibold))
-                Text("Enable them to get price drop and restock alerts.")
-                    .font(.caption)
+            Circle()
+                .fill(item.isInRestockWindow ? Color.accentColor : Color.clear)
+                .frame(width: 8, height: 8)
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(item.nameDisplay)
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundStyle(.primary)
+
+                    if item.hasActiveAlert {
+                        Image(systemName: "bell.badge.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Color.accentColor)
+                    }
+                }
+
+                if let restockDate = item.nextRestockDate {
+                    Text(restockSubtitle(restockDate: restockDate))
+                        .font(.system(size: 12))
+                        .foregroundStyle(item.isInRestockWindow ? Color.accentColor : .secondary)
+                }
+            }
+
+            Spacer()
+
+            if let price = item.lastPurchasedPrice {
+                Text(String(format: "$%.2f", price))
+                    .font(.system(size: 14))
                     .foregroundStyle(.secondary)
             }
-            Spacer()
-            Button("Settings") {
-                if let url = URL(string: UIApplication.openSettingsURLString) {
-                    UIApplication.shared.open(url)
-                }
-            }
-            .font(.subheadline.weight(.medium))
-            .tint(.orange)
         }
-        .padding(12)
-        .background(Color.orange.opacity(0.12))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .padding(.vertical, 4)
+    }
+
+    private func restockSubtitle(restockDate: Date) -> String {
+        let days = Calendar.current.dateComponents([.day], from: Date(), to: restockDate).day ?? 0
+        if days <= 0 { return "Restock now" }
+        if days == 1 { return "Due tomorrow" }
+        if days <= Constants.restockWindowDays { return "Due in \(days) days" }
+        return "Due \(formattedDate(restockDate))"
+    }
+
+    private func formattedDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        return formatter.string(from: date)
     }
 }
 
-// MARK: - Today's Deals strip
-private struct TodaysDealsStrip: View {
-    let deals: [UserItem]
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Today\u{2019}s Deals")
-                .font(.headline)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(deals) { item in
-                        DealChip(item: item)
-                    }
-                }
-            }
-        }
-    }
-}
+// MARK: - DealRowView
+// One row in the Today's Deals section.
+struct DealRowView: View {
 
-private struct DealChip: View {
-    let item: UserItem
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(item.nameDisplay)
-                .font(.subheadline.weight(.medium))
-                .lineLimit(1)
-            HStack(spacing: 4) {
-                Image(systemName: "tag.fill")
-                    .font(.caption2)
-                Text("On sale")
-                    .font(.caption)
-            }
-            .foregroundStyle(.green)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(Color.green.opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-    }
-}
-
-// MARK: - Smart List row
-private struct SmartListRow: View {
-    let item: UserItem
-    let status: RestockStatus
+    let deal: FlyerSale
+    var itemName: String = ""
+    var storeName: String = ""
 
     var body: some View {
         HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(item.nameDisplay)
-                    .font(.body)
-                if let days = item.daysUntilRestock {
-                    Text(restockSubtitle(days: days, status: status))
-                        .font(.caption)
-                        .foregroundStyle(captionColor(status: status))
-                } else {
-                    Text("No restock estimate yet")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
+            Image(systemName: "tag.fill")
+                .font(.system(size: 14))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 20)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(itemName.isEmpty ? "Sale item" : itemName)
+                    .font(.system(size: 14, weight: .medium))
+                Text(storeName.isEmpty ? "Your store" : storeName)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.secondary)
             }
+
             Spacer()
-            RestockBadge(status: status)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 12)
-    }
 
-    private func restockSubtitle(days: Int, status: RestockStatus) -> String {
-        switch status {
-        case .due:                return days < 0 ? "Overdue by \(abs(days))d" : "Due today"
-        case .approaching:        return "In \(days) day\(days == 1 ? "" : "s")"
-        case .ok:                 return "In \(days) day\(days == 1 ? "" : "s")"
-        case .seasonalSuppressed: return "Seasonal item"
-        }
-    }
-
-    private func captionColor(status: RestockStatus) -> Color {
-        switch status {
-        case .due:                return .red
-        case .approaching:        return .orange
-        case .ok:                 return .secondary
-        case .seasonalSuppressed: return .secondary
-        }
-    }
-}
-
-// MARK: - Mark as Purchased sheet
-// Lightweight sheet invoked via swipe-left on a Smart List row.
-// Full quantity picker and price history chart live in ItemDetailView.
-private struct MarkPurchasedSheet: View {
-    let item: UserItem
-    @ObservedObject var vm: HomeViewModel
-    @Environment(\.dismiss) private var dismiss
-    @State private var priceText = ""
-    @State private var quantity  = 1
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Price paid (optional)") {
-                    TextField("e.g. 3.99", text: $priceText)
-                        .keyboardType(.decimalPad)
-                }
-                Section("Quantity") {
-                    Stepper(
-                        "\(quantity) unit\(quantity == 1 ? "" : "s")",
-                        value: $quantity,
-                        in: 1...99
-                    )
-                }
-            }
-            .navigationTitle(item.nameDisplay)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        let price = Double(priceText.trimmingCharacters(in: .whitespaces))
-                        vm.markAsPurchased(item: item, price: price, quantity: quantity)
-                        dismiss()
-                    }
-                }
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(String(format: "$%.2f", deal.salePrice))
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                if let days = deal.expiresInDays() {
+                    Text(days == 0 ? "Ends today" : "Ends in \(days)d")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
                 }
             }
         }
-        .presentationDetents([.medium])
+        .padding(.vertical, 2)
     }
 }

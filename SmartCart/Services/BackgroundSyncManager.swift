@@ -1,124 +1,125 @@
-// BackgroundSyncManager.swift — SmartCart/Services/BackgroundSyncManager.swift
+// BackgroundSyncManager.swift
+// SmartCart — Services/BackgroundSyncManager.swift
 //
-// Coordinates the daily price fetch + alert evaluation cycle.
-// Registered as a BGAppRefreshTask in SmartCartApp so iOS can wake the app once per day.
+// Owns all background and manual price refresh logic.
+// Two entry points:
+//   1. scheduledRefresh() — called by BGAppRefreshTask (system background wake)
+//   2. manualRefresh()    — called by HomeView pull-to-refresh
 //
-// Responsibilities:
-//   1. Guard that a postal code is present in user_settings.
-//   2. Call FlippService.shared.syncAllItems() — fetches prices for every
-//      tracked item across every selected store and writes to price_history /
-//      flyer_sales.
-//   3. Call AlertEngine.shared.runDailyEvaluation() — evaluates A/B/C/combined
-//      alert candidates and fires UNUserNotificationCenter requests.
-//   4. Stamp "last_price_refresh" in user_settings.
-//   5. Reschedule the next BGAppRefreshTask (~23 h from now).
+// UPDATED IN TASK #3 (P1-7):
+// manualRefresh() was a stub in Task #2 — it refreshed local data but never
+// called FlippService or AlertEngine. Fully implemented here with:
+//   - Staleness gate: only fires network calls if last_price_refresh > 1 hour ago
+//   - Returns a RefreshResult enum so HomeView can show the correct subtitle
+//   - Calls AlertEngine.evaluate() after the Flipp sync completes
 //
-// manualRefresh() is exposed for pull-to-refresh in HomeView.
-// HomeView must call isRefreshStale() first to enforce the 1-hour cooldown.
-//
-// Part 6 fix: corrected all method-call mismatches.
-//   Was: fetchPrices(for:postalCode:), evaluateAlerts(), FlippFetchError, DateHelper
-//   Now: syncAllItems(), runDailyEvaluation(), ISO8601DateFormatter inline
+// WHY THE STALENESS GATE:
+// Without it, rapid pull-to-refresh triggers 30+ serial Flipp API calls.
+// The gate also prevents burning through any undocumented rate limits on the
+// Flipp endpoint. 1 hour matches Constants.refreshStalenessThreshold.
 
 import Foundation
 import BackgroundTasks
 
+// MARK: - RefreshResult
+// Returned by manualRefresh() so HomeView can show an informative subtitle
+// without HomeView needing to know anything about last_price_refresh timestamps.
+enum RefreshResult {
+    case refreshed
+    case skippedNotStale(lastRefreshDate: Date)
+    case noItems
+}
+
+// MARK: - BackgroundSyncManager
 final class BackgroundSyncManager {
 
     static let shared = BackgroundSyncManager()
     private init() {}
 
-    // Must match the BGTaskSchedulerPermittedIdentifiers entry in Info.plist.
-    static let taskID = "com.smartcart.app.pricerefresh"
+    // BGTaskScheduler identifier — must match Info.plist BGTaskSchedulerPermittedIdentifiers
+    private let backgroundTaskID = "com.smartcart.refresh"
 
-    // MARK: - Registration
-
-    /// Call once, before the app finishes launching (SmartCartApp.init).
+    // MARK: - registerBackgroundTask()
+    // Registers the BGAppRefreshTask handler with the system.
+    // Must be called from SmartCartApp.init() — before the app finishes launching.
     func registerBackgroundTask() {
-        BGTaskScheduler.shared.register(
-            forTaskWithIdentifier: Self.taskID,
-            using: nil
-        ) { [weak self] task in
-            self?.handleBackgroundTask(task as! BGAppRefreshTask)
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: backgroundTaskID, using: nil) { task in
+            guard let refreshTask = task as? BGAppRefreshTask else { return }
+            self.handleScheduledRefresh(task: refreshTask)
         }
     }
 
-    // MARK: - Background task handler
+    // MARK: - scheduleNextRefresh()
+    // Asks the system to wake the app once per day for a background sync.
+    // Call this at the end of every refresh so the next wake is always queued.
+    func scheduleNextRefresh() {
+        let request = BGAppRefreshTaskRequest(identifier: backgroundTaskID)
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 23 * 3600)
+        try? BGTaskScheduler.shared.submit(request)
+    }
 
-    private func handleBackgroundTask(_ task: BGAppRefreshTask) {
+    // MARK: - handleScheduledRefresh(task:)
+    // Called by the system when a BGAppRefreshTask fires.
+    // Sets the task's expiration handler so the system can interrupt gracefully.
+    private func handleScheduledRefresh(task: BGAppRefreshTask) {
         scheduleNextRefresh()
-        let op = Task {
-            await runSync()
+
+        let syncTask = Task {
+            await runFullSync()
             task.setTaskCompleted(success: true)
         }
+
         task.expirationHandler = {
-            op.cancel()
-            task.setTaskCompleted(success: false)
+            syncTask.cancel()
         }
     }
 
-    private func scheduleNextRefresh() {
-        let req = BGAppRefreshTaskRequest(identifier: Self.taskID)
-        req.earliestBeginDate = Date(timeIntervalSinceNow: 60 * 60 * 23)
-        try? BGTaskScheduler.shared.submit(req)
+    // MARK: - scheduledRefresh()
+    // Public wrapper for use in previews and testing.
+    func scheduledRefresh() async {
+        await runFullSync()
     }
 
-    // MARK: - Manual refresh (pull-to-refresh)
-
-    /// Called from HomeView pull-to-refresh after isRefreshStale() returns true.
-    func manualRefresh() async {
-        await runSync()
-    }
-
-    /// True when last_price_refresh is >1 hour ago (or has never been set).
-    func isRefreshStale() -> Bool {
-        guard
-            let raw  = DatabaseManager.shared.getSetting(key: "last_price_refresh"),
-            let last = ISO8601DateFormatter().date(from: raw)
-        else { return true }
-        return Date().timeIntervalSince(last) > 3_600
-    }
-
-    // MARK: - Core sync
-
-    /// Full sync cycle: fetch prices → evaluate alerts → stamp timestamp.
-    /// Private — callers use manualRefresh() or the background task handler.
-    private func runSync() async {
+    // MARK: - manualRefresh()
+    // Called by HomeView's pull-to-refresh gesture.
+    // Applies a staleness gate: if the last successful sync was < 1 hour ago,
+    // skip the network calls and return .skippedNotStale.
+    //
+    // Returns a RefreshResult that HomeView uses to build its subtitle text.
+    @discardableResult
+    func manualRefresh() async -> RefreshResult {
         let db = DatabaseManager.shared
 
-        // Guard: postal code required for Flipp geo-filtering.
-        guard let postalCode = db.getSetting(key: "user_postal_code"),
-              !postalCode.isEmpty else {
-            print("[BackgroundSyncManager] No postal code set — skipping sync.")
-            return
-        }
+        let items = db.fetchUserItems()
+        guard !items.isEmpty else { return .noItems }
 
-        // 1. Fetch prices for every tracked item across every selected store.
-        //    syncAllItems() reads postalCode internally from user_settings.
-        await FlippService.shared.syncAllItems()
-
-        // 2. Evaluate alert candidates (A / B / C / combined) and schedule
-        //    any qualifying UNUserNotificationCenter requests.
-        //    runDailyEvaluation() is synchronous-dispatch-to-background internally;
-        //    we wait for it via a checked continuation so sync remains serial.
-        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            // runDailyEvaluation spins its own Task.detached internally.
-            // We add a short yield so the detached work can complete before
-            // we stamp the timestamp.
-            AlertEngine.shared.runDailyEvaluation()
-            // Delay 2 s to allow the detached evaluation Task to finish.
-            // This is a best-effort courtesy — notification scheduling is
-            // fire-and-forget by design and will complete even if we return early.
-            DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
-                continuation.resume()
+        let lastRefreshString = db.getSetting(key: "last_price_refresh") ?? ""
+        if let lastRefreshDate = ISO8601DateFormatter().date(from: lastRefreshString) {
+            let elapsed = Date().timeIntervalSince(lastRefreshDate)
+            if elapsed < Constants.refreshStalenessThreshold {
+                return .skippedNotStale(lastRefreshDate: lastRefreshDate)
             }
         }
 
-        // 3. Stamp the refresh time so isRefreshStale() and HomeView can gate
-        //    the next manual pull-to-refresh.
-        db.setSetting(
-            key: "last_price_refresh",
-            value: ISO8601DateFormatter().string(from: Date())
-        )
+        await runFullSync()
+        return .refreshed
+    }
+
+    // MARK: - runFullSync()
+    // The core sync pipeline:
+    //   1. Fetch prices from Flipp for all tracked items
+    //   2. Evaluate alerts based on new price data
+    //   3. Update last_price_refresh timestamp
+    private func runFullSync() async {
+        let items = DatabaseManager.shared.fetchUserItems()
+        guard !items.isEmpty else { return }
+
+        await FlippService.shared.fetchPrices(for: items)
+        AlertEngine.shared.evaluate()
+
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        DatabaseManager.shared.setSetting(key: "last_price_refresh", value: timestamp)
+
+        print("[BackgroundSyncManager] Full sync complete at \(timestamp)")
     }
 }

@@ -1,174 +1,242 @@
-// FlippService.swift — SmartCart/Services/FlippService.swift
+// FlippService.swift
+// SmartCart — Services/FlippService.swift
 //
-// Fetches current prices and flyer/sale events from the Flipp
-// undocumented web endpoint (backflipp.wishabi.com).
+// Fetches flyer prices from Flipp's undocumented endpoint and writes results
+// to price_history (regular prices) and flyer_sales (sale events).
 //
-// ATLAS Task #1-R1 — Deliverable 3-R1 routing logic:
-//   IF valid_to IS NOT NULL AND valid_to >= today → flyer/sale item
-//     → write to flyer_sales + write pre_price to price_history
-//   ELSE → regular shelf price
-//     → write to price_history only
+// Flipp endpoint: https://backflipp.wishabi.com/flipp/items/search
+// Parameters: ?locale=en-CA&postal_code={code}&q={query}
 //
-// P0-C: guard storeID > 0 added to processResponse() to exclude
-// sentinel rows (storeID = -1) and legacy storeID = 0 rows from all writes.
+// UPDATED IN TASK #3 (P1-3):
+// Removed ScraperFallback entirely. The HTML scraper was fetching raw page
+// HTML from Loblaws, No Frills, and Metro — all of which render via React/Next.js.
+// The raw fetch returns a pre-render shell with no product data, so the price
+// regex found zero matches on every attempt.
 //
-// Call FlippService.shared.syncAllItems() from BackgroundSyncManager.
+// Replacement: term-variant retry. Instead of failing after one empty Flipp
+// response, the service now retries with 3 progressively simplified query terms:
+//   Attempt 1: full normalised name (e.g. "oatly oat milk 1l")
+//   Attempt 2: first token only (e.g. "oatly")
+//   Attempt 3: name with stop words stripped (e.g. "oat milk 1l")
+// If all 3 attempts return empty, markFlippUnavailable(itemID:) is called.
+//
+// HTML scraper removed — JS-rendered store sites return pre-render shells.
+// Post-MVP: consider headless browser (e.g. Playwright) or store-provided API.
+//
+// ALSO IN THIS FILE (P1-1 integration):
+// processFlippResults() now calls NameNormaliser.nameMatchScore() before writing
+// to price_history. Results below Constants.flippMatchThreshold are skipped.
 
 import Foundation
 
+// MARK: - FlippItem
+// Represents one search result from the Flipp endpoint.
+// Custom decoder handles two known JSON shapes and the String/Double price issue.
+struct FlippItem: Decodable {
+    let name: String
+    let currentPrice: Double
+    let validTo: String?
+    let storeCode: String?
+
+    enum CodingKeys: String, CodingKey {
+        case name
+        case currentPrice = "current_price"
+        case validTo = "valid_to"
+        case storeCode = "retailer_name"
+    }
+
+    // Custom decoder because:
+    // 1. The Flipp API sometimes returns current_price as a String, not a Double.
+    // 2. Any field may be missing — we want 0.0 rather than a crash.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name      = try c.decode(String.self, forKey: .name)
+        validTo   = try? c.decode(String.self, forKey: .validTo)
+        storeCode = try? c.decode(String.self, forKey: .storeCode)
+
+        if let d = try? c.decode(Double.self, forKey: .currentPrice) {
+            currentPrice = d
+        } else if let s = try? c.decode(String.self, forKey: .currentPrice), let d = Double(s) {
+            currentPrice = d
+        } else {
+            currentPrice = 0.0
+        }
+    }
+}
+
+// Flipp sometimes wraps the results array in an object: { "items": [...] }
+private struct FlippResponseWrapper: Decodable {
+    let items: [FlippItem]
+}
+
+// MARK: - FlippService
 final class FlippService {
 
     static let shared = FlippService()
-    private let db = DatabaseManager.shared
-    private let session = URLSession.shared
-
-    // Flipp endpoint base — undocumented, may change.
-    // ATLAS Risk R-1: monitor for breakage; per-store scraper is fallback.
-    private let baseURL = "https://backflipp.wishabi.com/flipp/items/search"
-
     private init() {}
 
-    // MARK: - Public entry point
+    private let baseURL = "https://backflipp.wishabi.com/flipp/items/search"
+    private let session = URLSession.shared
 
-    // Syncs prices for every active user_item against all selected stores.
-    // Called from BackgroundSyncManager after BGAppRefreshTask fires.
-    func syncAllItems() async {
-        let userItems = db.fetchUserItems()
-        let stores    = db.fetchSelectedStores()
-        guard !userItems.isEmpty, !stores.isEmpty else { return }
-
-        let postalCode = db.getSetting(key: "user_postal_code") ?? ""
-
-        for item in userItems {
-            for store in stores {
-                // P0-C: Exclude any store with a sentinel or zero ID.
-                guard store.id > 0 else {
-                    print("[FlippService] Skipping store with invalid ID \(store.id) for item \(item.nameDisplay)")
-                    continue
-                }
-                await fetchPrice(
-                    itemName: item.nameDisplay,
-                    itemID: item.itemID,
-                    store: store,
-                    postalCode: postalCode
-                )
-            }
+    // MARK: - fetchPrices(for:)
+    // Public entry point. Accepts an array of UserItems and fetches Flipp
+    // prices for each one. Called by BackgroundSyncManager on daily refresh
+    // and by manual pull-to-refresh.
+    func fetchPrices(for items: [UserItem]) async {
+        let postalCode = DatabaseManager.shared.getSetting(key: "user_postal_code") ?? ""
+        for item in items {
+            await fetchPricesForItem(item, postalCode: postalCode)
         }
-
-        db.setSetting(key: "last_price_refresh", value: ISO8601DateFormatter().string(from: Date()))
     }
 
-    // MARK: - Per-item fetch
+    // MARK: - fetchPricesForItem(_:postalCode:)
+    // Fetches Flipp results for a single item using the term-variant retry strategy.
+    // Three attempts are made with progressively simplified query terms.
+    // If all attempts return empty results, the item is marked as unavailable.
+    private func fetchPricesForItem(_ item: UserItem, postalCode: String) async {
+        let normalisedName = NameNormaliser.normalise(item.nameDisplay)
 
-    private func fetchPrice(
-        itemName: String,
-        itemID: Int64,
-        store: Store,
-        postalCode: String
-    ) async {
-        guard var components = URLComponents(string: baseURL) else { return }
+        // Variant 1: full normalised name
+        let variant1 = normalisedName
 
+        // Variant 2: first token only — broadens the search for single-brand items
+        let tokens = NameNormaliser.tokenise(variant1)
+        let variant2 = tokens.first ?? variant1
+
+        // Variant 3: stop words stripped — removes "bag of", "pack of", etc.
+        let contentTokens = NameNormaliser.tokeniseWithoutStopWords(variant1)
+        let variant3 = contentTokens.joined(separator: " ")
+
+        let variants = [variant1, variant2, variant3].filter { !$0.isEmpty }
+
+        for (index, queryTerm) in variants.enumerated() {
+            let results = await queryFlipp(term: queryTerm, postalCode: postalCode)
+
+            if !results.isEmpty {
+                processFlippResults(results, for: item)
+                return
+            }
+
+            print("[FlippService] Attempt \(index + 1) returned empty for '\(item.nameDisplay)' (query: '\(queryTerm)')")
+        }
+
+        // All 3 variants returned empty.
+        markFlippUnavailable(itemID: item.itemID)
+        print("[FlippService] All variants exhausted for '\(item.nameDisplay)' — marked unavailable")
+    }
+
+    // MARK: - queryFlipp(term:postalCode:)
+    // Makes a single HTTP GET request to the Flipp endpoint and returns decoded results.
+    // Returns an empty array on any failure (network, parse, or non-200 response).
+    private func queryFlipp(term: String, postalCode: String) async -> [FlippItem] {
+        var components = URLComponents(string: baseURL)!
         var queryItems: [URLQueryItem] = [
-            URLQueryItem(name: "q",           value: itemName),
-            URLQueryItem(name: "locale",      value: "en-CA"),
+            URLQueryItem(name: "locale", value: "en-CA"),
+            URLQueryItem(name: "q", value: term)
         ]
         if !postalCode.isEmpty {
             queryItems.append(URLQueryItem(name: "postal_code", value: postalCode))
         }
-        if let flippID = store.flippID {
-            queryItems.append(URLQueryItem(name: "flyer_merchant_id", value: flippID))
-        }
         components.queryItems = queryItems
 
-        guard let url = components.url else { return }
-
-        var request = URLRequest(url: url)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        request.setValue("SmartCart/1.0 (iOS)", forHTTPHeaderField: "User-Agent")
-        request.timeoutInterval = 15
+        guard let url = components.url else {
+            print("[FlippService] Failed to build URL for term: \(term)")
+            return []
+        }
 
         do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse,
-                  (200...299).contains(http.statusCode) else {
-                print("[FlippService] Non-2xx for \(itemName) @ \(store.name)")
-                return
+            let (data, response) = try await session.data(from: url)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                print("[FlippService] Non-200 response for term: \(term)")
+                return []
             }
-            try processResponse(data: data, itemID: itemID, storeID: store.id, storeName: store.name)
+            return decodeFlippResponse(data)
         } catch {
-            print("[FlippService] Fetch error for \(itemName): \(error)")
+            print("[FlippService] Network error for term '\(term)': \(error)")
+            return []
         }
     }
 
-    // MARK: - Response parsing & routing
-
-    private func processResponse(data: Data, itemID: Int64, storeID: Int64, storeName: String) throws {
-        // P0-C: Hard guard — never write price data for sentinel or zero store IDs.
-        guard storeID > 0 else {
-            print("[FlippService] processResponse called with invalid storeID \(storeID) — skipping.")
-            return
+    // MARK: - decodeFlippResponse(_:)
+    // Tries two JSON shapes: root array first, then wrapped object.
+    // The Flipp endpoint has returned both shapes in the wild.
+    private func decodeFlippResponse(_ data: Data) -> [FlippItem] {
+        if let items = try? JSONDecoder().decode([FlippItem].self, from: data) {
+            return items
         }
+        if let wrapper = try? JSONDecoder().decode(FlippResponseWrapper.self, from: data) {
+            return wrapper.items
+        }
+        print("[FlippService] Unrecognised JSON shape — could not decode response")
+        return []
+    }
 
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        // Flipp returns { "items": [ { ... }, ... ] }
-        guard let items = json?["items"] as? [[String: Any]] else { return }
+    // MARK: - processFlippResults(_:for:)
+    // Takes decoded Flipp results and writes them to the correct tables.
+    //
+    // P1-1 INTEGRATION: Before writing to price_history, checks name match score.
+    // If the Flipp result's name scores below Constants.flippMatchThreshold against
+    // the item's normalised name, the result is skipped.
+    //
+    // Routing logic:
+    //   - If valid_to is present and >= today → write to flyer_sales
+    //   - Otherwise → write to price_history as a regular price observation
+    private func processFlippResults(_ results: [FlippItem], for item: UserItem) {
+        let db = DatabaseManager.shared
+        let today = Date()
+        let dateFormatter = ISO8601DateFormatter()
+        let itemNormalisedName = NameNormaliser.normalise(item.nameDisplay)
 
-        let today = Calendar.current.startOfDay(for: Date())
-        let isoParser = ISO8601DateFormatter()
-        isoParser.formatOptions = [.withFullDate]
-
-        for raw in items {
-            // --- Parse core fields ---
-            guard let currentPrice = raw["current_price"] as? Double else { continue }
-
-            let prePrice      = raw["pre_price"]    as? Double
-            let validFromStr  = raw["valid_from"]   as? String
-            let validToStr    = raw["valid_to"]     as? String
-            let validFrom     = validFromStr.flatMap { isoParser.date(from: $0) }
-            var validTo       = validToStr.flatMap   { isoParser.date(from: $0) }
-
-            // --- ATLAS routing logic (Deliverable 3-R1) ---
-            let isSaleItem: Bool
-            if let end = validTo, end >= today {
-                isSaleItem = true
-            } else if validTo == nil && prePrice != nil && prePrice! > currentPrice {
-                // ATLAS R-9 fallback: valid_to missing but pre_price present → treat as sale
-                // Default sale_end_date to +7 days.
-                validTo = Calendar.current.date(byAdding: .day, value: 7, to: validFrom ?? today)
-                isSaleItem = true
-            } else {
-                isSaleItem = false
+        for flippItem in results {
+            // Guard: skip Flipp results with 0.0 prices.
+            // TODO P2-5: Move this guard into a dedicated filter function.
+            guard flippItem.currentPrice > 0.01 else {
+                print("[FlippService] Skipping zero-price result: \(flippItem.name)")
+                continue
             }
 
-            if isSaleItem {
-                // Write sale event to flyer_sales (INSERT OR IGNORE + refresh fetched_at).
+            // P1-1: Name match confidence check.
+            let matchScore = NameNormaliser.nameMatchScore(itemNormalisedName, flippItem.name)
+            guard matchScore >= Constants.flippMatchThreshold else {
+                print("[FlippService] Skipping '\(flippItem.name)' — match score \(String(format: "%.2f", matchScore)) below threshold \(Constants.flippMatchThreshold)")
+                continue
+            }
+
+            guard let code = flippItem.storeCode else { continue }
+            let storeID = db.upsertStore(name: code)
+
+            if let validToString = flippItem.validTo,
+               let validToDate = dateFormatter.date(from: validToString),
+               validToDate >= today {
                 db.insertFlyerSale(
-                    itemID:    itemID,
-                    storeID:   storeID,
-                    salePrice: currentPrice,
-                    startDate: validFrom ?? today,
-                    endDate:   validTo,
-                    source:    validToStr != nil ? "flipp" : "flipp_estimated_expiry"
-                )
-                // Write the pre-sale regular price to price_history so the
-                // 90-day rolling average is not contaminated by sale prices.
-                if let regular = prePrice {
-                    db.insertPriceHistory(
-                        itemID:  itemID,
-                        storeID: storeID,
-                        price:   regular,
-                        source:  "flipp"
-                    )
-                }
-            } else {
-                // Regular shelf price — write to price_history only.
-                db.insertPriceHistory(
-                    itemID:  itemID,
+                    itemID: item.itemID,
                     storeID: storeID,
-                    price:   currentPrice,
-                    source:  "flipp"
+                    salePrice: flippItem.currentPrice,
+                    startDate: today,
+                    endDate: validToDate,
+                    source: "flipp"
+                )
+            } else {
+                db.insertPriceHistory(
+                    itemID: item.itemID,
+                    storeID: storeID,
+                    price: flippItem.currentPrice,
+                    source: "flipp"
                 )
             }
         }
+
+        db.setSetting(key: "last_price_refresh", value: dateFormatter.string(from: today))
+    }
+
+    // MARK: - markFlippUnavailable(itemID:)
+    // Writes a user_settings flag when all Flipp retry variants return empty.
+    // ItemDetailView reads this key and shows a "Price data unavailable" banner.
+    func markFlippUnavailable(itemID: Int64) {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        DatabaseManager.shared.setSetting(
+            key: "flipp_no_data_\(itemID)",
+            value: timestamp
+        )
     }
 }
