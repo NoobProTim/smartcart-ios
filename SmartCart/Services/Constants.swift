@@ -41,25 +41,21 @@ enum Constants {
 
     // MARK: - Price Matching
     /// Minimum token-overlap score required to write a Flipp result's price
-    /// to price_history for a given item. Prevents cross-SKU contamination
-    /// (e.g. "Ariel Pods" price polluting an "Ariel Liquid" item).
+    /// to price_history for a given item. Prevents cross-SKU contamination.
     /// Range: 0.0 (any match) → 1.0 (exact token match required).
     /// 0.5 means at least half the tokens must overlap.
     static let flippMatchThreshold: Double = 0.5
 
     // MARK: - Background Sync
     /// Pull-to-refresh will not trigger a network sync if the last refresh
-    /// happened fewer than this many seconds ago. Prevents accidental
-    /// hammering of the Flipp endpoint on rapid pulls.
+    /// happened fewer than this many seconds ago.
     static let refreshStalenessThreshold: TimeInterval = 3600 // 1 hour
 
     // MARK: - Price History
     /// Rolling window for the average regular price calculation.
-    /// Prices older than this are excluded from the baseline.
     static let rollingAverageDays: Int = 90
 
     // MARK: - OCR
     /// Minimum Vision confidence score for a text observation to be kept.
-    /// Observations below this threshold are discarded before name parsing.
     static let ocrConfidenceThreshold: Float = 0.6
 }

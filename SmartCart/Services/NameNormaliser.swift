@@ -42,7 +42,6 @@ struct NameNormaliser {
 
     // MARK: - tokenise(_:)
     // Splits a normalised string into individual tokens (words).
-    // Exposed so callers can work with the token set directly.
     // Example: "oatly oat milk 1l" → ["oatly", "oat", "milk", "1l"]
     static func tokenise(_ normalisedName: String) -> [String] {
         return normalisedName.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
@@ -59,30 +58,22 @@ struct NameNormaliser {
     // MARK: - nameMatchScore(_:_:) — ADDED P1-1
     // Computes how similar two item names are on a scale of 0.0 to 1.0.
     //
-    // WHY: Flipp returns multiple results for a broad search term like "ariel".
-    // Without a similarity check, prices for "Ariel Pods", "Ariel Liquid", and
-    // "Ariel Powder" could all get written to the same item_id, poisoning the
-    // 90-day rolling average that drives Historical Low alerts.
-    //
     // HOW: Normalise both names → tokenise → count shared tokens (intersection)
     // → divide by the larger token set (max). A result of 1.0 = identical tokens.
     //
-    // Example: "ariel pods 42ct" (3 tokens) vs "ariel liquid 1l" (3 tokens)
+    // Example: "ariel pods 42ct" vs "ariel liquid 1l"
     //   Intersection: {"ariel"} = 1 shared token
-    //   Score: 1 / max(3, 3) = 0.33 → below threshold → SKIP writing to price_history
+    //   Score: 1 / max(3, 3) = 0.33 → below threshold → SKIP
     //
     // Example: "oatly oat milk 1l" vs "oatly oat milk 946ml"
     //   Intersection: {"oatly", "oat", "milk"} = 3 shared tokens
-    //   Score: 3 / max(4, 4) = 0.75 → above threshold → ALLOW write
+    //   Score: 3 / max(4, 4) = 0.75 → above threshold → ALLOW
     static func nameMatchScore(_ a: String, _ b: String) -> Double {
         let tokensA = Set(tokenise(normalise(a)))
         let tokensB = Set(tokenise(normalise(b)))
-
         guard !tokensA.isEmpty, !tokensB.isEmpty else { return 0.0 }
-
         let intersectionCount = Double(tokensA.intersection(tokensB).count)
         let maxCount = Double(max(tokensA.count, tokensB.count))
-
         return intersectionCount / maxCount
     }
 }

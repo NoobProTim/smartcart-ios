@@ -20,15 +20,12 @@ import Foundation
 import UserNotifications
 
 // MARK: - AlertCandidate
-// Internal struct representing a potential alert before it fires.
-// AlertEngine builds a list of these, sorts by priority, then fires
-// the top N up to the daily cap.
 struct AlertCandidate {
     let itemID: Int64
     let itemName: String
     let alertType: String        // "historical_low" | "sale" | "combined" | "expiry"
     let triggerPrice: Double
-    let storeName: String?       // Name of the store where the sale/low was found
+    let storeName: String?
     let priority: Int            // Lower = higher priority. 1=combined, 2=historical, 3=sale, 4=expiry
 }
 
@@ -39,16 +36,8 @@ final class AlertEngine {
     private init() {}
 
     // MARK: - evaluate()
-    // Main entry point. Called by BackgroundSyncManager after Flipp sync completes.
-    // Evaluates all tracked items, builds candidates, deduplicates, enforces the
-    // daily cap, writes to alert_log, and fires UNUserNotificationCenter requests.
-    //
-    // WHY: Centralising all alert logic here means the daily cap and dedup rules
-    // are impossible to accidentally bypass — any code path that fires an alert
-    // must go through this function.
     func evaluate() {
         let db = DatabaseManager.shared
-
         guard db.getSetting(key: "notification_enabled") == "1" else { return }
 
         var candidates: [AlertCandidate] = []
@@ -67,9 +56,6 @@ final class AlertEngine {
         let toFire = Array(sorted.prefix(remaining))
 
         for candidate in toFire {
-            // Write to alert_log FIRST — this is the record of intent.
-            // Even if the UNRequest fails (permission denied), the log row
-            // ensures the cap and dedup logic still work correctly.
             let notificationID = "alert-\(candidate.alertType)-\(candidate.itemID)"
             db.insertAlertLog(
                 itemID: candidate.itemID,
@@ -82,26 +68,19 @@ final class AlertEngine {
     }
 
     // MARK: - evaluateTypeA()
-    // Finds items where today's lowest observed regular price is below the
-    // 90-day rolling average. These are genuine price drops — not sale events.
     private func evaluateTypeA() -> [AlertCandidate] {
         let db = DatabaseManager.shared
         var candidates: [AlertCandidate] = []
-
         guard db.getSetting(key: "alert_historical_low") == "1" else { return [] }
 
         for item in db.fetchUserItems() {
             guard !db.hasAlertFiredForItem(itemID: item.itemID) else { continue }
-
             let avg = db.rollingAverage90(itemID: item.itemID)
             guard avg > 0 else { continue }
-
             guard let currentPrice = db.currentLowestPrice(for: item.itemID),
                   currentPrice > 0,
                   currentPrice < avg else { continue }
-
             let storeName = db.storeNameForCurrentLowestPrice(itemID: item.itemID)
-
             candidates.append(AlertCandidate(
                 itemID: item.itemID,
                 itemName: item.nameDisplay,
@@ -115,20 +94,15 @@ final class AlertEngine {
     }
 
     // MARK: - evaluateTypeB()
-    // Finds items that have an active flyer sale at one of the user's selected stores.
     private func evaluateTypeB() -> [AlertCandidate] {
         let db = DatabaseManager.shared
         var candidates: [AlertCandidate] = []
-
         guard db.getSetting(key: "alert_sale") == "1" else { return [] }
 
         for item in db.fetchUserItems() {
             guard !db.hasAlertFiredForItem(itemID: item.itemID) else { continue }
-
             guard let sale = db.activeSaleForItem(itemID: item.itemID) else { continue }
-
             let storeName = db.fetchSelectedStores().first(where: { $0.id == sale.storeID })?.name
-
             candidates.append(AlertCandidate(
                 itemID: item.itemID,
                 itemName: item.nameDisplay,
@@ -142,22 +116,17 @@ final class AlertEngine {
     }
 
     // MARK: - evaluateTypeC()
-    // Finds items with a sale expiring within Constants.saleExpiryReminderDays.
     private func evaluateTypeC() -> [AlertCandidate] {
         let db = DatabaseManager.shared
         var candidates: [AlertCandidate] = []
-
         guard db.getSetting(key: "alert_expiry") == "1" else { return [] }
 
         for item in db.fetchUserItems() {
             guard !db.hasAlertFiredForItem(itemID: item.itemID) else { continue }
-
             guard let sale = db.activeSaleForItem(itemID: item.itemID),
                   let expiresInDays = sale.expiresInDays(),
                   expiresInDays <= Constants.saleExpiryReminderDays else { continue }
-
             let storeName = db.fetchSelectedStores().first(where: { $0.id == sale.storeID })?.name
-
             candidates.append(AlertCandidate(
                 itemID: item.itemID,
                 itemName: item.nameDisplay,
@@ -171,8 +140,6 @@ final class AlertEngine {
     }
 
     // MARK: - mergeAndDedup(_:)
-    // When the same item has both a Type A and Type B candidate, merge them
-    // into a single "combined" alert so the user gets one rich notification.
     private func mergeAndDedup(_ candidates: [AlertCandidate]) -> [AlertCandidate] {
         var byItem: [Int64: [AlertCandidate]] = [:]
         for candidate in candidates {
@@ -204,12 +171,9 @@ final class AlertEngine {
     }
 
     // MARK: - scheduleNotification(for:identifier:)
-    // Builds and submits a UNNotificationRequest for the given candidate.
-    // Called after the alert_log row has been written, so this is best-effort.
     private func scheduleNotification(for candidate: AlertCandidate, identifier: String) {
         let content = UNMutableNotificationContent()
         content.sound = .default
-
         let price = String(format: "$%.2f", candidate.triggerPrice)
         let store = candidate.storeName ?? "your store"
 
@@ -236,7 +200,6 @@ final class AlertEngine {
             content: content,
             trigger: nil
         )
-
         UNUserNotificationCenter.current().add(request) { error in
             if let error {
                 print("[AlertEngine] Notification delivery failed for item \(candidate.itemID): \(error)")

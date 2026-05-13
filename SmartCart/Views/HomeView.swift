@@ -17,7 +17,6 @@
 // Pull-to-refresh now calls BackgroundSyncManager.manualRefresh() and
 // handles the RefreshResult enum to show "Prices updated just now" or
 // "Last updated X hours ago" as the nav subtitle.
-// The partial stub from Task #2 has been replaced with the fully tested integration.
 
 import SwiftUI
 import UserNotifications
@@ -26,7 +25,6 @@ struct HomeView: View {
 
     @StateObject private var viewModel = HomeViewModel()
     @EnvironmentObject private var notificationRouter: NotificationRouter
-
     @State private var deepLinkedItemID: Int64? = nil
     @State private var showNotificationBanner = false
     @State private var showScanner = false
@@ -37,7 +35,6 @@ struct HomeView: View {
         NavigationStack {
             ZStack {
                 listContent
-
                 if viewModel.items.isEmpty {
                     EmptyCTAView(onScanTapped: { showScanner = true })
                         .transition(.opacity)
@@ -56,11 +53,9 @@ struct HomeView: View {
                     .accessibilityLabel("Scan a receipt")
                 }
             }
-            // Pull-to-refresh wired to BackgroundSyncManager with staleness gate (P1-7)
             .refreshable {
                 await performPullToRefresh()
             }
-            // Notification permission banner — safeAreaInset, not a modal (P1-6)
             .safeAreaInset(edge: .bottom) {
                 if showNotificationBanner {
                     NotificationBannerView(
@@ -106,7 +101,6 @@ struct HomeView: View {
     }
 
     // MARK: - listContent
-    // Two-section list: Today's Deals (all active sales) + Smart List (user items).
     @ViewBuilder
     private var listContent: some View {
         List {
@@ -144,21 +138,17 @@ struct HomeView: View {
     }
 
     // MARK: - deepLinkDestination
-    // View pushed when a notification is tapped. Resolves item ID to UserItem.
     @ViewBuilder
     private var deepLinkDestination: some View {
         if let itemID = deepLinkedItemID,
            let item = viewModel.items.first(where: { $0.itemID == itemID }) {
             ItemDetailView(item: item)
         } else {
-            Text("Item not found")
-                .foregroundStyle(.secondary)
+            Text("Item not found").foregroundStyle(.secondary)
         }
     }
 
     // MARK: - performPullToRefresh()
-    // Calls BackgroundSyncManager.manualRefresh() and updates the nav subtitle
-    // based on the RefreshResult. Handles the staleness gate transparently.
     private func performPullToRefresh() async {
         let result = await BackgroundSyncManager.shared.manualRefresh()
         await MainActor.run {
@@ -175,7 +165,6 @@ struct HomeView: View {
     }
 
     // MARK: - updateRefreshSubtitle()
-    // Shows the last-updated time on .onAppear without requiring a refresh.
     private func updateRefreshSubtitle() {
         let lastRefreshString = DatabaseManager.shared.getSetting(key: "last_price_refresh") ?? ""
         guard let lastRefreshDate = ISO8601DateFormatter().date(from: lastRefreshString) else {
@@ -191,8 +180,6 @@ struct HomeView: View {
     }
 
     // MARK: - relativeTimeString(from:)
-    // Converts a Date to a user-friendly relative string.
-    // Examples: "2 minutes ago", "1 hour ago", "3 hours ago"
     private func relativeTimeString(from date: Date) -> String {
         let elapsed = Date().timeIntervalSince(date)
         let minutes = Int(elapsed / 60)
@@ -203,7 +190,6 @@ struct HomeView: View {
     }
 
     // MARK: - checkNotificationPermission()
-    // Shows the amber banner if the user has denied notifications.
     private func checkNotificationPermission() {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             DispatchQueue.main.async {
@@ -214,9 +200,7 @@ struct HomeView: View {
 }
 
 // MARK: - SmartListRowView
-// One row in the Smart List: name + restock date + alert badge + price.
 struct SmartListRowView: View {
-
     let item: UserItem
 
     var body: some View {
@@ -230,14 +214,12 @@ struct SmartListRowView: View {
                     Text(item.nameDisplay)
                         .font(.system(size: 15, weight: .medium))
                         .foregroundStyle(.primary)
-
                     if item.hasActiveAlert {
                         Image(systemName: "bell.badge.fill")
                             .font(.system(size: 11))
                             .foregroundStyle(Color.accentColor)
                     }
                 }
-
                 if let restockDate = item.nextRestockDate {
                     Text(restockSubtitle(restockDate: restockDate))
                         .font(.system(size: 12))
@@ -272,9 +254,7 @@ struct SmartListRowView: View {
 }
 
 // MARK: - DealRowView
-// One row in the Today's Deals section.
 struct DealRowView: View {
-
     let deal: FlyerSale
     var itemName: String = ""
     var storeName: String = ""
