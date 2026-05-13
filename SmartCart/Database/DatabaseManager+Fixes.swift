@@ -1,14 +1,31 @@
 // DatabaseManager+Fixes.swift
-// Task #1 P1-E fixes + Task #2 DB helpers for ReplenishmentEngine.
+// SmartCart — Database/DatabaseManager+Fixes.swift
+//
+// P1-E fixes + DB helpers for ReplenishmentEngine.
+//
+// REPLENISHMENT DELEGATION (Issue #14 fix):
+//   recalculateReplenishment() previously contained median + date math inline.
+//   It now delegates entirely to ReplenishmentEngine.shared.updateOnPurchase().
+//   DatabaseManager is data-only — it reads and writes rows.
+//   ReplenishmentEngine owns all cycle inference and date calculation.
+//
+//   Call chain after this fix:
+//     markPurchased() → recalculateReplenishment() → ReplenishmentEngine.updateOnPurchase()
+//     markPurchasedOnDate() → recalculateReplenishment() → ReplenishmentEngine.updateOnPurchase()
+//
+//   fetchCycleDays(for:) is kept here as a raw SQLite read.
+//   ReplenishmentEngine.inferCycleDays() calls it to get gap dates.
+//   The DB fetches data; the engine decides what it means.
+
 import Foundation
 import SQLite
 
 extension DatabaseManager {
 
-    // MARK: - P1-E: Atomic purchase write with quantity awareness
-    // quantity > 1 scales the next-restock date forward proportionally.
-    // Seasonal detection: if stddev of inter-purchase gaps > 30 days across ≥ 3
-    // purchases, sets user_items.is_seasonal = true and suppresses restock alerts.
+    // MARK: - markPurchased(itemID:priceAtPurchase:quantity:)
+    // Atomically writes a purchase to purchase_history and updates user_items.
+    // quantity > 1 means the user bought multiple units in one transaction.
+    // After the DB write, delegates replenishment recalculation to ReplenishmentEngine.
     func markPurchased(itemID: Int64, priceAtPurchase: Double?, quantity: Int = 1) {
         let today = Date()
         let qty   = max(1, quantity)
@@ -18,15 +35,17 @@ extension DatabaseManager {
                 try db.run(userItem.update(
                     userItemsLastPurchasedDate  <- today,
                     userItemsLastPurchasedPrice <- priceAtPurchase,
-                    userItemsNextRestockDate    <- nil
+                    userItemsNextRestockDate    <- nil   // engine will set the real value below
                 ))
                 try db.run(purchaseHistoryTable.insert(
                     purchaseItemID  <- itemID,
                     purchasedAt     <- today,
                     purchasePrice   <- priceAtPurchase,
-                    purchaseQty     <- Int64(qty)   // Fix: qty is Int, Expression<Int64> needs Int64
+                    purchaseQty     <- Int64(qty)
                 ))
             }
+            // Delegate all replenishment math to ReplenishmentEngine.
+            // DO NOT put cycle inference here — engine owns that logic.
             recalculateReplenishment(itemID: itemID, quantity: qty)
             updateSeasonalFlag(itemID: itemID)
         } catch {
@@ -34,24 +53,24 @@ extension DatabaseManager {
         }
     }
 
-    // Fix: was `private` — `private` is file-scoped in Swift, so DatabaseManager+Purchases.swift
-    // (a different file) cannot call this. Changed to internal.
+    // MARK: - recalculateReplenishment(itemID:quantity:)
+    // Previously contained median + date math inline. Now data-only: delegates
+    // to ReplenishmentEngine so inference logic lives in exactly one place.
+    //
+    // WHY KEEP THIS FUNCTION AT ALL:
+    //   markPurchasedOnDate() in DatabaseManager+Purchases.swift calls it by name.
+    //   Keeping the wrapper means that file needs no change.
+    //   The wrapper is a single delegation line — it adds no logic.
     func recalculateReplenishment(itemID: Int64, quantity: Int) {
-        guard let cycleDays = fetchCycleDays(for: itemID) else { return }
-        let scaledDays  = cycleDays * quantity
-        let nextRestock = Calendar.current.date(
-            byAdding: .day, value: scaledDays, to: Date()
-        )
-        try? db.run(
-            userItemsTable
-                .filter(userItemsItemID == itemID)
-                .update(userItemsNextRestockDate <- nextRestock)
-        )
+        // All cycle inference and next-restock-date calculation lives in ReplenishmentEngine.
+        // This function is now a pure delegation shim — no math here.
+        ReplenishmentEngine.shared.updateOnPurchase(itemID: itemID, quantity: quantity)
     }
 
-    // P1-E seasonal detection (MVP-lite).
-    // Reads all purchase dates for this item; if stddev of inter-purchase gaps
-    // > 30 days AND ≥ 3 purchases exist, marks item as seasonal.
+    // MARK: - updateSeasonalFlag(itemID:)
+    // Reads all purchase dates; if stddev of inter-purchase gaps > 30 days
+    // across >= 3 purchases, marks the item as seasonal in user_items.
+    // Seasonal items have restock alerts suppressed.
     private func updateSeasonalFlag(itemID: Int64) {
         let rows = (try? db.prepare(
             purchaseHistoryTable
@@ -79,11 +98,10 @@ extension DatabaseManager {
         )
     }
 
-    // MARK: - ReplenishmentEngine helpers (Task #2)
-
-    /// Fetches a single UserItem by its item_id.
-    /// Used by ReplenishmentEngine to read cycle + seasonal data without
-    /// loading the entire list. Returns nil if the item doesn't exist.
+    // MARK: - fetchUserItem(itemID:)
+    // Fetches a single UserItem by its item_id.
+    // Used by ReplenishmentEngine to read cycle + seasonal data without
+    // loading the entire list. Returns nil if the item doesn't exist.
     func fetchUserItem(itemID: Int64) -> UserItem? {
         let query = userItemsTable
             .join(itemsTable, on: userItemsItemID == self.itemID)
@@ -104,8 +122,9 @@ extension DatabaseManager {
         )
     }
 
-    /// Directly sets the next_restock_date for an item.
-    /// Called by ReplenishmentEngine after quantity-scaling a bulk purchase.
+    // MARK: - setNextRestockDate(itemID:date:)
+    // Directly sets the next_restock_date for an item.
+    // Called by ReplenishmentEngine after computing the restock date.
     func setNextRestockDate(itemID: Int64, date: Date?) {
         try? db.run(
             userItemsTable
@@ -114,34 +133,13 @@ extension DatabaseManager {
         )
     }
 
-    // MARK: - P1-G: Race-condition-safe flyer sale upsert
-    func insertFlyerSale(itemID: Int64, storeID: Int64, salePrice: Double,
-                         startDate: Date, endDate: Date?, source: String) {
-        let sql = """
-            INSERT INTO flyer_sales
-                (item_id, store_id, sale_price, sale_start_date, sale_end_date, source, fetched_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(item_id, store_id, sale_start_date) DO UPDATE SET
-                fetched_at = excluded.fetched_at,
-                sale_price = excluded.sale_price,
-                sale_end_date = excluded.sale_end_date
-        """
-        let fmt = ISO8601DateFormatter()
-        let endVal: String? = endDate.map { fmt.string(from: $0) }
-        try? db.execute(
-            sql,
-            itemID,
-            storeID,
-            salePrice,
-            fmt.string(from: startDate),
-            endVal as Any,
-            source,
-            fmt.string(from: Date())
-        )
-    }
-
-    /// Returns the median purchase cycle in days for an item.
-    /// Kept private — external callers use fetchUserItem() to get effectiveCycleDays.
+    // MARK: - fetchCycleDays(for:)
+    // RAW DATA READ ONLY — no inference logic here.
+    // Reads purchase_history and returns the raw median gap between purchases.
+    // ReplenishmentEngine.inferCycleDays() calls this to get raw intervals,
+    // then applies its own threshold + median + clamping logic on top.
+    //
+    // Returns nil if fewer than 2 purchases exist.
     func fetchCycleDays(for itemID: Int64) -> Int? {
         let rows = (try? db.prepare(
             purchaseHistoryTable
@@ -156,11 +154,61 @@ extension DatabaseManager {
             if days > 0 { intervals.append(days) }
         }
         guard !intervals.isEmpty else { return nil }
+        // Raw median — engine applies its own threshold + clamping. This is just the data.
         let sorted = intervals.sorted()
         return sorted[sorted.count / 2]
     }
 
-    // Migration helper — call inside runMigrations().
+    // MARK: - updateReplenishmentData(itemID:inferredCycleDays:nextRestockDate:)
+    // Writes the engine's computed values back to user_items.
+    // Called by ReplenishmentEngine.recalculate(for:) after inference is complete.
+    func updateReplenishmentData(itemID: Int64, inferredCycleDays: Int?, nextRestockDate: Date?) {
+        let inferred: Int64? = inferredCycleDays.map { Int64($0) }
+        try? db.run(
+            userItemsTable
+                .filter(userItemsItemID == itemID)
+                .update(
+                    userItemsReplenishInferred  <- inferred,
+                    userItemsNextRestockDate    <- nextRestockDate
+                )
+        )
+    }
+
+    // MARK: - hasActiveAlert(for:)
+    // Public alias used by ReplenishmentEngine.urgencyScore() for band-1 check.
+    // Returns true if an alert fired for this item today.
+    func hasActiveAlert(for itemID: Int64) -> Bool {
+        return hasAlertFiredForItem(itemID: itemID)
+    }
+
+    // MARK: - insertFlyerSale (P1-G race-condition-safe upsert)
+    func insertFlyerSale(itemID: Int64, storeID: Int64, salePrice: Double,
+                         startDate: Date, endDate: Date?, source: String) {
+        let sql = """
+            INSERT INTO flyer_sales
+                (item_id, store_id, sale_price, sale_start_date, sale_end_date, source, fetched_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(item_id, store_id, sale_start_date) DO UPDATE SET
+                fetched_at = excluded.fetched_at,
+                sale_price = excluded.sale_price,
+                sale_end_date = excluded.sale_end_date
+        """
+        let fmt    = ISO8601DateFormatter()
+        let endVal: String? = endDate.map { fmt.string(from: $0) }
+        try? db.execute(
+            sql,
+            itemID,
+            storeID,
+            salePrice,
+            fmt.string(from: startDate),
+            endVal as Any,
+            source,
+            fmt.string(from: Date())
+        )
+    }
+
+    // MARK: - applyFlyerSalesUniqueIndex
+    // Migration helper — called inside runMigrations().
     func applyFlyerSalesUniqueIndex() {
         try? db.execute("""
             CREATE UNIQUE INDEX IF NOT EXISTS idx_flyer_unique
@@ -168,7 +216,9 @@ extension DatabaseManager {
         """)
     }
 
-    // MARK: - Per-item alert check
+    // MARK: - hasAlertFiredForItem(itemID:)
+    // Returns true if an alert fired for this item today.
+    // Used by fetchUserItems() and hasActiveAlert() to set hasActiveAlert on UserItem.
     func hasAlertFiredForItem(itemID: Int64) -> Bool {
         let startOfToday = Calendar.current.startOfDay(for: Date())
         let count = (try? db.scalar(
