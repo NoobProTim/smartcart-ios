@@ -5,6 +5,11 @@
 //
 // P1-H fix: ReceiptScanResult now carries `let id: UUID` set at scan time.
 // Identifiable conformance relies on this UUID — no String.hash used anywhere.
+//
+// #16 fix: scan() throws ScanError.noItemsFound when parseReceipt() returns
+// zero line items. Prevents ReceiptReviewView from opening with a blank list.
+// ReceiptScanView already wraps scan() in a do/catch — the error surfaces as
+// an alert with a user-friendly message, prompting a retake.
 
 import Foundation
 import Vision
@@ -40,13 +45,28 @@ final class ReceiptScannerService {
 
     // MARK: - Public API
 
+    // #16: Guard added after parseReceipt().
+    // If Vision ran successfully but found no price-matching lines (e.g. blurry
+    // photo, non-receipt image, or receipt with no readable prices), throw
+    // noItemsFound instead of returning an empty ReceiptScanResult.
+    // This prevents ReceiptReviewView from opening with a blank list and no
+    // explanation — the caller's catch block surfaces the error as a retake prompt.
     func scan(image: UIImage) async throws -> ReceiptScanResult {
         guard let cgImage = image.cgImage else {
             throw ScanError.invalidImage
         }
         let lines = try await recogniseText(in: cgImage)
         // P1-H: UUID generated here, once, at scan time.
-        return parseReceipt(lines: lines, id: UUID())
+        let result = parseReceipt(lines: lines, id: UUID())
+
+        // #16: Refuse to return an empty result — ReceiptReviewView cannot
+        // display a useful screen with zero items. Throw so the caller can
+        // prompt the user to retake the photo.
+        guard !result.items.isEmpty else {
+            throw ScanError.noItemsFound
+        }
+
+        return result
     }
 
     // MARK: - Vision text recognition
@@ -195,9 +215,16 @@ final class ReceiptScannerService {
 
     enum ScanError: LocalizedError {
         case invalidImage
+        case noItemsFound  // #16: thrown when OCR finds no price-matching line items
+
         var errorDescription: String? {
             switch self {
-            case .invalidImage: return "Could not read the image. Please try again."
+            case .invalidImage:
+                return "Could not read the image. Please try again."
+            case .noItemsFound:
+                // User-facing message — shown as alert in ReceiptScanView catch block.
+                // Prompts a retake rather than opening a blank review screen.
+                return "No items were found on this receipt. Try retaking the photo with better lighting."
             }
         }
     }

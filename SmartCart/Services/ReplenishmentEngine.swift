@@ -24,6 +24,13 @@
 //   50–99 = item is past its restock date (overdue)
 //   1–49  = item is in the restock window (approaching)
 //   0     = item is fine / not yet tracked
+//
+// QUANTITY SCALING (P2-4):
+//   updateOnPurchase(itemID:quantity:) scales the next restock date when quantity > 1.
+//   Buying 2 units of milk means the user won't need milk for 2x the normal cycle.
+//   The inferred cycle itself is NOT changed — only the projected restock date moves out.
+//   scaledDays is clamped to maxReplenishmentDays so a bulk buy never silences an item
+//   for longer than 180 days.
 
 import Foundation
 
@@ -231,10 +238,56 @@ final class ReplenishmentEngine {
 
     // MARK: - updateOnPurchase(itemID:quantity:)
     // Called by DatabaseManager.recalculateReplenishment() after every purchase write.
-    // Recalculates cycle days and next restock date for the item.
-    // quantity parameter reserved for P2-4 quantity-scaling (do not implement now).
+    //
+    // P2-4 QUANTITY SCALING:
+    //   When quantity > 1, the next restock date is pushed out proportionally.
+    //   Example: milk has a 7-day cycle. Buying 2 units → next restock in 14 days.
+    //   The INFERRED cycle (7 days) is preserved unchanged in the database.
+    //   Only the projected next_restock_date is scaled — so the engine still learns
+    //   the user's true buying rhythm from the raw purchase gaps, not the scaled dates.
+    //
+    //   scaledDays is clamped to Constants.maxReplenishmentDays (180 days) so a
+    //   bulk Costco run never silences an item for more than 6 months.
+    //
+    //   quantity == 1 path calls recalculate() directly — identical to old behaviour,
+    //   no regression for standard single-unit purchases.
     func updateOnPurchase(itemID: Int64, quantity: Int) {
-        // TODO P2-4: scale restock date by quantity (e.g. buying 2 units doubles the cycle)
-        recalculate(for: itemID)
+        guard quantity > 1 else {
+            // Standard single-unit purchase — normal recalculate path, no scaling needed
+            recalculate(for: itemID)
+            return
+        }
+
+        // Quantity > 1: scale the next restock date by the quantity purchased.
+        // Step 1: Run standard inference to keep inferredCycleDays up to date.
+        let inferred = inferCycleDays(for: itemID)
+
+        // Step 2: Determine the base cycle (override → inferred → default).
+        let baseCycle = effectiveCycleDays(for: itemID)
+
+        // Step 3: Scale by quantity, clamped to the maximum sensible window.
+        let scaledDays = min(baseCycle * quantity, Constants.maxReplenishmentDays)
+
+        // Step 4: Compute the scaled next restock date from today's last purchase.
+        let scaledRestockDate: Date?
+        if let userItem = db.fetchUserItem(itemID: itemID),
+           let lastPurchased = userItem.lastPurchasedDate {
+            scaledRestockDate = Calendar.current.date(
+                byAdding: .day,
+                value: scaledDays,
+                to: lastPurchased
+            )
+        } else {
+            scaledRestockDate = nil
+        }
+
+        // Step 5: Write back — inferred cycle unchanged, only restock date is scaled.
+        db.updateReplenishmentData(
+            itemID: itemID,
+            inferredCycleDays: inferred,
+            nextRestockDate: scaledRestockDate
+        )
+
+        print("[ReplenishmentEngine] updateOnPurchase — item \(itemID) qty \(quantity) → scaled \(scaledDays) days")
     }
 }
