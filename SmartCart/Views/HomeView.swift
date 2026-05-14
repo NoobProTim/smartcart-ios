@@ -78,7 +78,7 @@ struct HomeView: View {
             }
         }
         .sheet(isPresented: $showScanner, onDismiss: { viewModel.load() }) {
-            ReceiptScanView()
+            MultiShotCaptureView()
         }
         .onAppear {
             viewModel.load()

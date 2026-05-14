@@ -50,7 +50,7 @@
 		327FAF6D2FB58DA200FC6EB7 /* ReceiptImportService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF1F2FB58DA200FC6EB7 /* ReceiptImportService.swift */; };
 		327FAF6E2FB58DA200FC6EB7 /* AlertDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF302FB58DA200FC6EB7 /* AlertDetailView.swift */; };
 		327FAF6F2FB58DA200FC6EB7 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF3D2FB58DA200FC6EB7 /* SettingsView.swift */; };
-		327FAF702FB58DA200FC6EB7 /* ReceiptScanView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF3B2FB58DA200FC6EB7 /* ReceiptScanView.swift */; };
+		327FAF702FB58DA200FC6EB7 /* MultiShotCaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF3B2FB58DA200FC6EB7 /* MultiShotCaptureView.swift */; };
 		327FAF712FB58DA200FC6EB7 /* NameNormaliser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF1E2FB58DA200FC6EB7 /* NameNormaliser.swift */; };
 		327FAF722FB58DA200FC6EB7 /* DatabaseManager+PriceHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF052FB58DA200FC6EB7 /* DatabaseManager+PriceHistory.swift */; };
 		327FAF732FB58DA200FC6EB7 /* DatabaseManager+Fixes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF042FB58DA200FC6EB7 /* DatabaseManager+Fixes.swift */; };
@@ -113,7 +113,7 @@
 		327FAF382FB58DA200FC6EB7 /* OnboardingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingView.swift; sourceTree = "<group>"; };
 		327FAF392FB58DA200FC6EB7 /* PriceHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PriceHistoryView.swift; sourceTree = "<group>"; };
 		327FAF3A2FB58DA200FC6EB7 /* ReceiptReviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptReviewView.swift; sourceTree = "<group>"; };
-		327FAF3B2FB58DA200FC6EB7 /* ReceiptScanView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReceiptScanView.swift; sourceTree = "<group>"; };
+		327FAF3B2FB58DA200FC6EB7 /* MultiShotCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MultiShotCaptureView.swift; sourceTree = "<group>"; };
 		327FAF3C2FB58DA200FC6EB7 /* RestockBadge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestockBadge.swift; sourceTree = "<group>"; };
 		327FAF3D2FB58DA200FC6EB7 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		327FAF3E2FB58DA200FC6EB7 /* SmartListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartListView.swift; sourceTree = "<group>"; };
@@ -269,7 +269,7 @@
 				327FAF382FB58DA200FC6EB7 /* OnboardingView.swift */,
 				327FAF392FB58DA200FC6EB7 /* PriceHistoryView.swift */,
 				327FAF3A2FB58DA200FC6EB7 /* ReceiptReviewView.swift */,
-				327FAF3B2FB58DA200FC6EB7 /* ReceiptScanView.swift */,
+				327FAF3B2FB58DA200FC6EB7 /* MultiShotCaptureView.swift */,
 				327FAF3C2FB58DA200FC6EB7 /* RestockBadge.swift */,
 				327FAF3D2FB58DA200FC6EB7 /* SettingsView.swift */,
 				327FAF3E2FB58DA200FC6EB7 /* SmartListView.swift */,
@@ -413,7 +413,7 @@
 				327FAF6D2FB58DA200FC6EB7 /* ReceiptImportService.swift in Sources */,
 				327FAF6E2FB58DA200FC6EB7 /* AlertDetailView.swift in Sources */,
 				327FAF6F2FB58DA200FC6EB7 /* SettingsView.swift in Sources */,
-				327FAF702FB58DA200FC6EB7 /* ReceiptScanView.swift in Sources */,
+				327FAF702FB58DA200FC6EB7 /* MultiShotCaptureView.swift in Sources */,
 				327FAF712FB58DA200FC6EB7 /* NameNormaliser.swift in Sources */,
 				327FAF722FB58DA200FC6EB7 /* DatabaseManager+PriceHistory.swift in Sources */,
 				327FAF732FB58DA200FC6EB7 /* DatabaseManager+Fixes.swift in Sources */,
@@ -557,6 +557,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "SmartCart uses the camera to scan grocery receipts.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "SmartCart accesses your photos to scan grocery receipts.";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
@@ -588,6 +590,8 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
 				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "SmartCart uses the camera to scan grocery receipts.";
+				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "SmartCart accesses your photos to scan grocery receipts.";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";

@@ -11,7 +11,7 @@ struct ContentView: View {
                 .tabItem {
                     Label("Smart List", systemImage: "cart")
                 }
-            ReceiptScanView()
+            MultiShotCaptureView()
                 .tabItem {
                     Label("Scan", systemImage: "camera")
                 }
