@@ -98,11 +98,78 @@ struct HomeView: View {
     @ViewBuilder
     private var listContent: some View {
         List {
+            // Savings card
+            if viewModel.annualSavings > 0 {
+                Section {
+                    HStack(spacing: 16) {
+                        Image(systemName: "dollarsign.circle.fill")
+                            .font(.system(size: 36))
+                            .foregroundStyle(.green)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("You've saved")
+                                .font(.system(size: 13))
+                                .foregroundStyle(.secondary)
+                            Text(viewModel.annualSavings, format: .currency(code: "CAD"))
+                                .font(.system(size: 22, weight: .bold))
+                            Text("vs. your average prices this year")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .padding(.vertical, 6)
+                }
+            }
+
+            // Grocery list
+            if !viewModel.groceryList.isEmpty {
+                Section {
+                    ForEach(viewModel.groceryList) { entry in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(entry.nameDisplay)
+                                    .font(.system(size: 15))
+                                if let price = entry.expectedPrice {
+                                    Text("Expected: \(price, format: .currency(code: "CAD"))")
+                                        .font(.system(size: 13))
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            Spacer()
+                            Image(systemName: "cart")
+                                .foregroundStyle(.secondary)
+                        }
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                DatabaseManager.shared.removeFromGroceryList(id: entry.id)
+                                viewModel.load()
+                            } label: {
+                                Label("Remove", systemImage: "trash")
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Grocery List")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .textCase(nil)
+                }
+            }
+
             if !viewModel.todaysDeals.isEmpty {
                 Section {
                     ForEach(viewModel.todaysDeals) { item in
                         if let sale = DatabaseManager.shared.fetchActiveSales(for: item.itemID).first {
-                            DealRowView(deal: sale, itemName: item.nameDisplay)
+                            Button {
+                                DatabaseManager.shared.addToGroceryList(
+                                    itemID: item.itemID,
+                                    expectedPrice: sale.salePrice
+                                )
+                                viewModel.load()
+                            } label: {
+                                DealRowView(deal: sale, itemName: item.nameDisplay)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 } header: {

@@ -44,6 +44,12 @@ final class HomeViewModel: ObservableObject {
     /// True while data is being fetched from the database.
     @Published var isLoading: Bool = false
 
+    /// Total savings vs. rolling averages for the current calendar year.
+    @Published var annualSavings: Double = 0
+
+    /// Unpurchased grocery list items, shown on Home below the savings card.
+    @Published var groceryList: [GroceryListItem] = []
+
     // MARK: - Private dependencies
 
     private let db     = DatabaseManager.shared
@@ -68,6 +74,8 @@ final class HomeViewModel: ObservableObject {
             items           = sorted
             todaysDeals     = deals
             restockStatuses = statuses
+            annualSavings   = db.totalSavingsThisYear()
+            groceryList     = db.fetchGroceryList()
             isLoading       = false
         }
     }

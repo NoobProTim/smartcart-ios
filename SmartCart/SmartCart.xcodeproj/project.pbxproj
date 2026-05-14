@@ -54,6 +54,7 @@
 		327FAF712FB58DA200FC6EB7 /* NameNormaliser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF1E2FB58DA200FC6EB7 /* NameNormaliser.swift */; };
 		327FAF722FB58DA200FC6EB7 /* DatabaseManager+PriceHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF052FB58DA200FC6EB7 /* DatabaseManager+PriceHistory.swift */; };
 		327FAF732FB58DA200FC6EB7 /* DatabaseManager+Fixes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF042FB58DA200FC6EB7 /* DatabaseManager+Fixes.swift */; };
+		327FAF7A2FB58DA200FC6EB7 /* DatabaseManager+GroceryList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF092FB58DA200FC6EB7 /* DatabaseManager+GroceryList.swift */; };
 		327FAF742FB58DA200FC6EB7 /* EmptyCTAView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF312FB58DA200FC6EB7 /* EmptyCTAView.swift */; };
 		327FAF762FB58DA200FC6EB7 /* NotificationBannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF352FB58DA200FC6EB7 /* NotificationBannerView.swift */; };
 		327FAF772FB58DA200FC6EB7 /* OnboardingSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF372FB58DA200FC6EB7 /* OnboardingSetupView.swift */; };
@@ -73,6 +74,7 @@
 		327FAF042FB58DA200FC6EB7 /* DatabaseManager+Fixes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DatabaseManager+Fixes.swift"; sourceTree = "<group>"; };
 		327FAF052FB58DA200FC6EB7 /* DatabaseManager+PriceHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DatabaseManager+PriceHistory.swift"; sourceTree = "<group>"; };
 		327FAF062FB58DA200FC6EB7 /* DatabaseManager+Purchases.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DatabaseManager+Purchases.swift"; sourceTree = "<group>"; };
+		327FAF092FB58DA200FC6EB7 /* DatabaseManager+GroceryList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DatabaseManager+GroceryList.swift"; sourceTree = "<group>"; };
 		327FAF072FB58DA200FC6EB7 /* Schema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Schema.swift; sourceTree = "<group>"; };
 		327FAF0C2FB58DA200FC6EB7 /* AlertCandidate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertCandidate.swift; sourceTree = "<group>"; };
 		327FAF0D2FB58DA200FC6EB7 /* AlertLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertLog.swift; sourceTree = "<group>"; };
@@ -187,6 +189,7 @@
 				327FAF042FB58DA200FC6EB7 /* DatabaseManager+Fixes.swift */,
 				327FAF052FB58DA200FC6EB7 /* DatabaseManager+PriceHistory.swift */,
 				327FAF062FB58DA200FC6EB7 /* DatabaseManager+Purchases.swift */,
+				327FAF092FB58DA200FC6EB7 /* DatabaseManager+GroceryList.swift */,
 				327FAF072FB58DA200FC6EB7 /* Schema.swift */,
 			);
 			path = Database;
@@ -417,6 +420,7 @@
 				327FAF712FB58DA200FC6EB7 /* NameNormaliser.swift in Sources */,
 				327FAF722FB58DA200FC6EB7 /* DatabaseManager+PriceHistory.swift in Sources */,
 				327FAF732FB58DA200FC6EB7 /* DatabaseManager+Fixes.swift in Sources */,
+				327FAF7A2FB58DA200FC6EB7 /* DatabaseManager+GroceryList.swift in Sources */,
 				327FAF742FB58DA200FC6EB7 /* EmptyCTAView.swift in Sources */,
 				327FAF762FB58DA200FC6EB7 /* NotificationBannerView.swift in Sources */,
 				327FAF772FB58DA200FC6EB7 /* OnboardingSetupView.swift in Sources */,

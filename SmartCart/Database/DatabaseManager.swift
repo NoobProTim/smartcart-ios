@@ -153,12 +153,25 @@ final class DatabaseManager {
         } catch {
             print("[DatabaseManager] Migration error: \(error)")
         }
+        applyM3Migrations()
     }
 
     /// M2 additive migrations. Safe to call repeatedly.
     private func applyM2Migrations() {
         try? db.execute("ALTER TABLE user_items ADD COLUMN is_seasonal INTEGER NOT NULL DEFAULT 0")
         try? db.execute("ALTER TABLE purchase_history ADD COLUMN qty INTEGER NOT NULL DEFAULT 1")
+    }
+
+    /// M3: grocery_list table (ifNotExists — safe on existing databases).
+    private func applyM3Migrations() {
+        try? db.run(groceryListTable.create(ifNotExists: true) { t in
+            t.column(groceryListID,        primaryKey: .autoincrement)
+            t.column(groceryListItemID)
+            t.column(groceryListPrice)
+            t.column(groceryListAddedAt)
+            t.column(groceryListPurchased, defaultValue: 0)
+            t.foreignKey(groceryListItemID, references: itemsTable, itemID, delete: .cascade)
+        })
     }
 
     private func seedDefaultSettings() {

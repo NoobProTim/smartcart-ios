@@ -101,3 +101,14 @@ let userStoresTable = Table("user_stores")
 let userSettingsTable = Table("user_settings")
 let settingKey        = Expression<String>("key")
 let settingValue      = Expression<String?>("value")
+
+// MARK: - grocery_list
+
+// MARK: - grocery_list
+
+let groceryListTable     = Table("grocery_list")
+let groceryListID        = Expression<Int64>("id")
+let groceryListItemID    = Expression<Int64>("item_id")
+let groceryListPrice     = Expression<Double?>("expected_price")
+let groceryListAddedAt   = Expression<Date>("added_date")
+let groceryListPurchased = Expression<Int64>("is_purchased")

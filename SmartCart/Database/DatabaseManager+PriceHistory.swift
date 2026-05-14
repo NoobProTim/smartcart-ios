@@ -121,4 +121,29 @@ extension DatabaseManager {
         guard let lowest = candidates.min() else { return nil }
         return (price: lowest, label: label)
     }
+
+    func totalSavingsThisYear() -> Double {
+        let cal  = Calendar.current
+        let year = cal.component(.year, from: Date())
+        let fmt  = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        guard let startOfYear = fmt.date(from: "\(year)-01-01") else { return 0 }
+
+        let rows = (try? db.prepare(
+            purchaseHistoryTable
+                .filter(purchasedAt >= startOfYear)
+                .select(purchaseItemID, purchasePrice)
+        )) ?? AnySequence([])
+
+        var total = 0.0
+        for row in rows {
+            guard let paid = row[purchasePrice],
+                  paid > 0,
+                  let avg = rollingAverage90(for: row[purchaseItemID]),
+                  paid < avg
+            else { continue }
+            total += avg - paid
+        }
+        return max(0, total)
+    }
 }
