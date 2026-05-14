@@ -20,23 +20,21 @@ final class SmartListViewModel: ObservableObject {
     func loadItems() {
         isLoading = true
         errorMessage = nil
-        Task.detached(priority: .userInitiated) { [weak self] in
+        Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             let items = self.db.fetchUserItems()
-            await MainActor.run {
-                self.userItems = items
-                self.isLoading = false
-            }
+            self.userItems = items
+            self.isLoading = false
         }
     }
 
     // Mark an item as purchased at an optional price.
     // Atomic write guaranteed by DatabaseManager.markPurchased() (Fix P0-1).
     func markAsPurchased(item: UserItem, price: Double?) {
-        Task.detached(priority: .userInitiated) { [weak self] in
+        Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             self.db.markPurchased(itemID: item.itemID, priceAtPurchase: price)
-            await self.loadItems()
+            self.loadItems()
         }
     }
 
@@ -44,11 +42,11 @@ final class SmartListViewModel: ObservableObject {
     func addItem(nameDisplay: String) {
         let nameNorm = nameDisplay.lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        Task.detached(priority: .userInitiated) { [weak self] in
+        Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             let iid = self.db.upsertItem(nameNormalised: nameNorm, nameDisplay: nameDisplay)
             self.db.upsertUserItem(itemIDValue: iid)
-            await self.loadItems()
+            self.loadItems()
         }
     }
 

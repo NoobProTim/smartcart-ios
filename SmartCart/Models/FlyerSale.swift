@@ -26,4 +26,15 @@ struct FlyerSale: Identifiable, Equatable {
         if let end = validTo { return end >= today }
         return true // no end date recorded — treat as active
     }
+
+    // Days until this sale expires. 0 = ends today, negative = already expired.
+    // Returns nil when no end date was recorded.
+    func expiresInDays() -> Int? {
+        guard let end = validTo else { return nil }
+        return Calendar.current.dateComponents(
+            [.day],
+            from: Calendar.current.startOfDay(for: Date()),
+            to: Calendar.current.startOfDay(for: end)
+        ).day
+    }
 }

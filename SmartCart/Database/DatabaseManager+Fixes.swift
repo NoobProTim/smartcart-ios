@@ -107,7 +107,7 @@ extension DatabaseManager {
         let stddev = sqrt(gaps.map { pow($0 - mean, 2) }.reduce(0, +) / Double(gaps.count))
 
         let isSeasonal = stddev > 30
-        try? db.run(
+        _ = try? db.run(
             userItemsTable
                 .filter(userItemsItemID == itemID)
                 .update(userItemsIsSeasonal <- (isSeasonal ? 1 : 0))
@@ -120,7 +120,7 @@ extension DatabaseManager {
     // loading the entire list. Returns nil if the item doesn't exist.
     func fetchUserItem(itemID: Int64) -> UserItem? {
         let query = userItemsTable
-            .join(itemsTable, on: userItemsItemID == self.itemID)
+            .join(itemsTable, on: userItemsItemID == itemID)
             .filter(userItemsItemID == itemID)
             .limit(1)
         guard let row = try? db.pluck(query) else { return nil }
@@ -142,7 +142,7 @@ extension DatabaseManager {
     // Directly sets the next_restock_date for an item.
     // Called by ReplenishmentEngine after computing the restock date.
     func setNextRestockDate(itemID: Int64, date: Date?) {
-        try? db.run(
+        _ = try? db.run(
             userItemsTable
                 .filter(userItemsItemID == itemID)
                 .update(userItemsNextRestockDate <- date)
@@ -179,7 +179,7 @@ extension DatabaseManager {
     // Called by ReplenishmentEngine.recalculate(for:) after inference is complete.
     func updateReplenishmentData(itemID: Int64, inferredCycleDays: Int?, nextRestockDate: Date?) {
         let inferred: Int64? = inferredCycleDays.map { Int64($0) }
-        try? db.run(
+        _ = try? db.run(
             userItemsTable
                 .filter(userItemsItemID == itemID)
                 .update(
@@ -210,13 +210,13 @@ extension DatabaseManager {
         """
         let fmt    = ISO8601DateFormatter()
         let endVal: String? = endDate.map { fmt.string(from: $0) }
-        try? db.execute(
+        _ = try? db.run(
             sql,
             itemID,
             storeID,
             salePrice,
             fmt.string(from: startDate),
-            endVal as Any,
+            endVal,
             source,
             fmt.string(from: Date())
         )

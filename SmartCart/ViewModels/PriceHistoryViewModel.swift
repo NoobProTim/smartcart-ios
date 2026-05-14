@@ -14,25 +14,35 @@ final class PriceHistoryViewModel: ObservableObject {
     @Published var isLoading: Bool = false
 
     private let db = DatabaseManager.shared
-    let item: UserItem
+
+    // points: alias used by ItemDetailView (range-filtered subset of pricePoints)
+    var points: [PricePoint] { pricePoints }
+
+    init() {}
 
     init(item: UserItem) {
-        self.item = item
+        load(itemID: item.itemID, range: .thirtyDays)
     }
 
-    func load() {
+    func load() {}
+
+    func load(itemID: Int64, range: ChartRange = .thirtyDays) {
         isLoading = true
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-            let sales   = self.db.fetchActiveSales(for: self.item.itemID)
-            let avg     = self.db.rollingAverage90(for: self.item.itemID)
-            let history = self.db.fetchPriceHistory(for: self.item.itemID)
-            await MainActor.run {
-                self.pricePoints    = history
-                self.activeSales    = sales
-                self.rollingAvg90  = avg
-                self.isLoading     = false
+        Task {
+            let sales   = db.fetchActiveSales(for: itemID)
+            let avg     = db.rollingAverage90(for: itemID)
+            let history = db.fetchPriceHistory(for: itemID)
+            let filtered: [PricePoint]
+            if let cutoff = range.cutoffDate {
+                filtered = history.filter { $0.observedAt >= cutoff }
+            } else {
+                filtered = history
             }
+
+            pricePoints   = filtered
+            activeSales   = sales
+            rollingAvg90  = avg
+            isLoading     = false
         }
     }
 

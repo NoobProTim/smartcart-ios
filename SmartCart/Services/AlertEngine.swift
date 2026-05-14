@@ -75,8 +75,7 @@ final class AlertEngine {
 
         for item in db.fetchUserItems() {
             guard !db.hasAlertFiredForItem(itemID: item.itemID) else { continue }
-            let avg = db.rollingAverage90(itemID: item.itemID)
-            guard avg > 0 else { continue }
+            guard let avg = db.rollingAverage90(for: item.itemID), avg > 0 else { continue }
             guard let currentPrice = db.currentLowestPrice(for: item.itemID),
                   currentPrice > 0,
                   currentPrice < avg else { continue }

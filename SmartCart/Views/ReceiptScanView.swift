@@ -64,7 +64,20 @@ struct ReceiptScanView: View {
             .navigationTitle("Scan Receipt")
             // P1-H: .sheet(item:) uses UUID-backed Identifiable — no hash collision.
             .sheet(item: $scanResult) { result in
-                ReceiptReviewView(result: result) { scanResult = nil }
+                ReceiptReviewView(
+                    items: result.items.map { item in
+                        ParsedReceiptItem(
+                            rawName: item.nameRaw,
+                            normalisedName: item.nameNormalised,
+                            parsedPrice: item.price,
+                            confidence: item.confidence >= 0.8 ? .high : .medium
+                        )
+                    },
+                    isPresented: Binding(
+                        get: { scanResult != nil },
+                        set: { if !$0 { scanResult = nil } }
+                    )
+                )
             }
             // P1-B: Camera permission denied sheet.
             .sheet(isPresented: $showPermissionSheet) {

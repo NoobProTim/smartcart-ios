@@ -162,10 +162,10 @@ final class DatabaseManager {
     }
 
     private func seedDefaultSettings() {
-        for (key, value) in defaultSettings {
+        for (key, value) in Schema.defaultSettings {
             let row = userSettingsTable.filter(settingKey == key)
             if (try? db.scalar(row.count)) == 0 {
-                try? db.run(userSettingsTable.insert(settingKey <- key, settingValue <- value))
+                _ = try? db.run(userSettingsTable.insert(settingKey <- key, settingValue <- value))
             }
         }
     }
@@ -178,12 +178,12 @@ final class DatabaseManager {
     }
 
     func setSetting(key: String, value: String?) {
-        try? db.run(userSettingsTable.insert(or: .replace,
+        _ = try? db.run(userSettingsTable.insert(or: .replace,
             settingKey <- key, settingValue <- value))
     }
 
     func deleteSetting(key: String) {
-        try? db.run(userSettingsTable.filter(settingKey == key).delete())
+        _ = try? db.run(userSettingsTable.filter(settingKey == key).delete())
     }
 
     // MARK: - Store helpers
@@ -229,12 +229,46 @@ final class DatabaseManager {
     func upsertUserItem(itemIDValue: Int64) {
         let existing = userItemsTable.filter(userItemsItemID == itemIDValue)
         if (try? db.scalar(existing.count)) == 0 {
-            try? db.run(userItemsTable.insert(
+            _ = try? db.run(userItemsTable.insert(
                 userItemsItemID    <- itemIDValue,
                 userItemsAddedDate <- Date(),
                 userItemsIsActive  <- 1
             ))
         }
+    }
+
+    // MARK: - findItem / insertItem / addToWatchlist / insertPurchase
+
+    // Looks up an item by its normalised name. Returns the itemID if found, nil otherwise.
+    func findItem(normalisedName: String) -> Int64? {
+        guard let row = try? db.pluck(itemsTable.filter(itemNameNormalised == normalisedName)) else { return nil }
+        return row[itemID]
+    }
+
+    // Inserts a new item row and returns its new itemID.
+    // Callers should call findItem first to avoid duplicate errors.
+    @discardableResult
+    func insertItem(normalisedName: String, displayName: String) -> Int64 {
+        return (try? db.run(itemsTable.insert(
+            itemNameNormalised <- normalisedName,
+            itemNameDisplay    <- displayName,
+            itemCreatedAt      <- Date()
+        ))) ?? 0
+    }
+
+    // Adds an item to the user's Smart List. Safe to call if already present.
+    func addToWatchlist(itemID itemIDValue: Int64) {
+        upsertUserItem(itemIDValue: itemIDValue)
+    }
+
+    // Records a purchase with a date string (yyyy-MM-dd from DateHelper.todayString()).
+    // Used by ReceiptReviewView and AlertDetailView.
+    func insertPurchase(itemID: Int64, storeID: Int64?, price: Double, date: String, source: String) {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+        let purchaseDate = fmt.date(from: date) ?? Date()
+        markPurchasedOnDate(itemID: itemID, priceAtPurchase: price, storeID: storeID,
+                            date: purchaseDate, source: source)
     }
 
     // MARK: - Fetch user items
@@ -312,7 +346,7 @@ final class DatabaseManager {
 
     func logAlert(itemID: Int64, storeID: Int64, type: String,
                   price: Double, saleEventID: Int64?, notificationID: String?) {
-        try? db.run(alertLogTable.insert(
+        _ = try? db.run(alertLogTable.insert(
             alertItemID      <- itemID,
             alertStoreID     <- storeID,
             alertType        <- type,

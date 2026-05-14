@@ -9,6 +9,7 @@
 //   5. About        — app version + build number
 
 import SwiftUI
+import Combine
 import UserNotifications
 
 // MARK: - SettingsViewModel
@@ -29,7 +30,7 @@ final class SettingsViewModel: ObservableObject {
     @Published var postalCodeError: String? = nil   // P1-9: validation error
 
     // Stores
-    @Published var allStores: [StoreRow] = []
+    @Published var allStores: [Store] = []
     @Published var selectedStoreIDs: Set<Int64> = []
 
     // All available chains (used for Add Store flow)

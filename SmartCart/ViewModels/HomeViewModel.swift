@@ -55,24 +55,20 @@ final class HomeViewModel: ObservableObject {
     /// Call on .onAppear and after any mutation (purchase, add item).
     func load() {
         isLoading = true
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
-
-            let allItems = self.db.fetchUserItems()
-            let deals    = self.computeTodaysDeals(from: allItems)
-            let statuses = self.computeRestockStatuses(for: allItems)
+        Task {
+            let allItems = db.fetchUserItems()
+            let deals    = computeTodaysDeals(from: allItems)
+            let statuses = computeRestockStatuses(for: allItems)
 
             // Delegate sort entirely to ReplenishmentEngine.
             // urgencyScore() ranks: active-alert > overdue > in-window > ok.
             // Fixes Issue #15 — items with active alerts now pin to the top.
-            let sorted = self.engine.sortedByUrgency(allItems)
+            let sorted = engine.sortedByUrgency(allItems)
 
-            await MainActor.run {
-                self.items           = sorted
-                self.todaysDeals     = deals
-                self.restockStatuses = statuses
-                self.isLoading       = false
-            }
+            items           = sorted
+            todaysDeals     = deals
+            restockStatuses = statuses
+            isLoading       = false
         }
     }
 
@@ -83,15 +79,14 @@ final class HomeViewModel: ObservableObject {
     /// Quantity defaults to 1; pass a higher value for bulk purchases
     /// (ReplenishmentEngine.updateOnPurchase will scale the restock date).
     func markAsPurchased(item: UserItem, price: Double?, quantity: Int = 1) {
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
+        Task {
             // #17: Only one engine call path exists:
             //   markPurchased() → recalculateReplenishment() → ReplenishmentEngine
             // The previous redundant engine.updateOnPurchase() call has been removed.
-            self.db.markPurchased(itemID: item.itemID,
-                                  priceAtPurchase: price,
-                                  quantity: quantity)
-            await self.load()
+            db.markPurchased(itemID: item.itemID,
+                             priceAtPurchase: price,
+                             quantity: quantity)
+            load()
         }
     }
 

@@ -80,6 +80,69 @@ extension DatabaseManager {
         return count > 0
     }
 
+    // MARK: - fetchAlertLogRow(alertLogID:)
+    // Fetches a single alert_log row by its primary key.
+    // Used by AlertDetailView to display the price and type of a fired alert.
+    func fetchAlertLogRow(alertLogID: Int64) -> AlertLog? {
+        guard let row = try? db.pluck(alertLogTable.filter(alertID == alertLogID)) else { return nil }
+        let sid = row[alertStoreID]
+        return AlertLog(
+            id:             row[alertID],
+            itemID:         row[alertItemID],
+            storeID:        sid,
+            alertType:      row[alertType],
+            triggerPrice:   row[alertPrice],
+            firedAt:        row[alertFiredAt],
+            notificationID: row[alertNotifID],
+            saleEventID:    row[alertSaleEventID]
+        )
+    }
+
+    // MARK: - fetchSaleEndDate(saleEventID:)
+    // Returns the sale_end_date for a flyer_sales row as a Date.
+    // Used by AlertDetailView to show "Sale ends May 17".
+    func fetchSaleEndDate(saleEventID: Int64) -> Date? {
+        guard let row = try? db.pluck(flyerSalesTable.filter(flyerID == saleEventID)) else { return nil }
+        return row[flyerEndDate]
+    }
+
+    // MARK: - insertAlertLog(itemID:alertType:triggerPrice:notificationID:)
+    // Simplified log writer used by AlertEngine.evaluate().
+    // AlertEngine doesn't track storeID at the candidate level, so storeID defaults to 0.
+    func insertAlertLog(itemID: Int64, alertType alertTypeValue: String,
+                        triggerPrice: Double, notificationID: String?) {
+        _ = try? db.run(alertLogTable.insert(
+            alertItemID      <- itemID,
+            alertStoreID     <- Int64(0),
+            alertType        <- alertTypeValue,
+            alertPrice       <- triggerPrice,
+            alertFiredAt     <- Date(),
+            alertSaleEventID <- Optional<Int64>.none,
+            alertNotifID     <- notificationID
+        ))
+    }
+
+    // MARK: - storeNameForCurrentLowestPrice(itemID:)
+    // Returns the name of the store with the lowest price_history price
+    // for this item in the last 7 days. Used by AlertEngine Type A evaluation.
+    func storeNameForCurrentLowestPrice(itemID: Int64) -> String? {
+        let sevenDaysAgo = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
+        guard let row = try? db.pluck(
+            priceHistoryTable
+                .filter(priceHistItemID == itemID && priceHistDate >= sevenDaysAgo)
+                .order(priceHistPrice.asc)
+                .select(priceHistStoreID)
+        ) else { return nil }
+        return fetchStoreName(for: row[priceHistStoreID])
+    }
+
+    // MARK: - activeSaleForItem(itemID:)
+    // Returns the first currently active flyer sale for an item, or nil.
+    // Used by AlertEngine Type B and C evaluation.
+    func activeSaleForItem(itemID: Int64) -> FlyerSale? {
+        return fetchActiveSales(for: itemID).first
+    }
+
     func primaryStoreID(for itemID: Int64) -> Int64? {
         let row = try? db.pluck(
             userItemsTable
@@ -99,8 +162,8 @@ extension DatabaseManager {
     func fetchStoreName(for storeIDParam: Int64) -> String? {
         // Use local aliases to guarantee the compiler binds to the module-level
         // Expression constants, not the parameter or this method.
-        let colID:   Expression<Int64>  = storeID
-        let colName: Expression<String> = storeName
+        let colID:   SQLite.Expression<Int64>  = storeID
+        let colName: SQLite.Expression<String> = storeName
         let row = try? db.pluck(storesTable.filter(colID == storeIDParam).select(colName))
         return row?[colName]
     }

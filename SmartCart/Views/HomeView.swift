@@ -70,21 +70,15 @@ struct HomeView: View {
                     .animation(.easeInOut(duration: 0.3), value: showNotificationBanner)
                 }
             }
-            .background {
-                NavigationLink(
-                    destination: deepLinkDestination,
-                    isActive: Binding(
-                        get: { deepLinkedItemID != nil },
-                        set: { if !$0 { deepLinkedItemID = nil } }
-                    )
-                ) { EmptyView() }
+            .navigationDestination(isPresented: Binding(
+                get: { deepLinkedItemID != nil },
+                set: { if !$0 { deepLinkedItemID = nil } }
+            )) {
+                deepLinkDestination
             }
         }
-        .sheet(isPresented: $showScanner) {
-            ReceiptScannerView(onComplete: {
-                showScanner = false
-                viewModel.load()
-            })
+        .sheet(isPresented: $showScanner, onDismiss: { viewModel.load() }) {
+            ReceiptScanView()
         }
         .onAppear {
             viewModel.load()
@@ -106,8 +100,10 @@ struct HomeView: View {
         List {
             if !viewModel.todaysDeals.isEmpty {
                 Section {
-                    ForEach(viewModel.todaysDeals) { deal in
-                        DealRowView(deal: deal)
+                    ForEach(viewModel.todaysDeals) { item in
+                        if let sale = DatabaseManager.shared.fetchActiveSales(for: item.itemID).first {
+                            DealRowView(deal: sale, itemName: item.nameDisplay)
+                        }
                     }
                 } header: {
                     Text("Today's Deals")
@@ -119,7 +115,7 @@ struct HomeView: View {
 
             Section {
                 ForEach(viewModel.items) { item in
-                    NavigationLink(destination: ItemDetailView(item: item)) {
+                    NavigationLink(destination: ItemDetailView(itemID: item.itemID)) {
                         SmartListRowView(item: item)
                     }
                     .accessibilityLabel("\(item.nameDisplay)\(item.isInRestockWindow ? ", due for restock" : "")")
@@ -142,7 +138,7 @@ struct HomeView: View {
     private var deepLinkDestination: some View {
         if let itemID = deepLinkedItemID,
            let item = viewModel.items.first(where: { $0.itemID == itemID }) {
-            ItemDetailView(item: item)
+            ItemDetailView(itemID: item.itemID)
         } else {
             Text("Item not found").foregroundStyle(.secondary)
         }

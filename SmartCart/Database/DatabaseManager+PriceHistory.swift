@@ -13,7 +13,7 @@ extension DatabaseManager {
             priceHistDate    >= today
         )
         if (try? db.scalar(existing.count)) ?? 0 > 0 { return }
-        try? db.run(priceHistoryTable.insert(
+        _ = try? db.run(priceHistoryTable.insert(
             priceHistItemID  <- itemID,
             priceHistStoreID <- storeID,
             priceHistPrice   <- price,

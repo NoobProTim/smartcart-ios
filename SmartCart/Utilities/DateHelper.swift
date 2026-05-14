@@ -59,4 +59,12 @@ enum DateHelper {
     static func daysFrom(now to: Date) -> Int {
         Calendar.current.dateComponents([.day], from: Date(), to: to).day ?? 0
     }
+
+    // Formats a Date for user-facing display (e.g. "May 14, 2026").
+    static func friendlyDate(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .none
+        return f.string(from: date)
+    }
 }

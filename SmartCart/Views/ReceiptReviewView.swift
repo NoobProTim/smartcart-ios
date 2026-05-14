@@ -12,6 +12,7 @@
 // this view handles the non-empty case.
 
 import SwiftUI
+import Combine
 
 // MARK: - ReceiptReviewViewModel
 
@@ -42,12 +43,11 @@ final class ReceiptReviewViewModel: ObservableObject {
         isSaving = true
         saveError = nil
 
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
+        Task {
             let today = DateHelper.todayString()
 
-            for editable in self.selectedItems {
-                let rawName = editable.editedName.isEmpty ? editable.source.nameNormalised : editable.editedName
+            for editable in selectedItems {
+                let rawName = editable.editedName.isEmpty ? editable.source.normalisedName : editable.editedName
                 // Normalise the name in case the user typed it with mixed case
                 let normalisedName = NameNormaliser.normalise(rawName)
                 let displayName = rawName.trimmingCharacters(in: .whitespaces)
@@ -61,18 +61,15 @@ final class ReceiptReviewViewModel: ObservableObject {
                 DatabaseManager.shared.addToWatchlist(itemID: itemID)
 
                 // Write a purchase_history row for this receipt line
-                if let price = editable.source.price {
+                if let price = editable.source.parsedPrice {
                     DatabaseManager.shared.insertPurchase(
                         itemID: itemID, storeID: nil, price: price, date: today, source: "receipt")
                 }
             }
 
-            await MainActor.run {
-                self.isSaving = false
-                self.saveComplete = true
-                // Dismiss after a short celebration beat
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { dismissAction() }
-            }
+            isSaving = false
+            saveComplete = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { dismissAction() }
         }
     }
 }
@@ -87,7 +84,7 @@ struct EditableReceiptItem: Identifiable {
 
     // The name to display in the text field: edited name if set, else the OCR name.
     var displayedName: String {
-        editedName.isEmpty ? source.nameNormalised : editedName
+        editedName.isEmpty ? source.normalisedName : editedName
     }
 }
 
@@ -226,7 +223,7 @@ struct ReceiptItemRow: View {
                     }
                 }
 
-                if let price = editable.source.price {
+                if let price = editable.source.parsedPrice {
                     Text(String(format: "$%.2f", price))
                         .font(.system(size: 13)).foregroundStyle(.secondary)
                 }
@@ -240,14 +237,14 @@ struct ReceiptItemRow: View {
 // MARK: - Preview
 #Preview {
     let mockItems: [ParsedReceiptItem] = [
-        ParsedReceiptItem(nameNormalised: "salted butter", nameDisplay: "Salted Butter",
-                          price: 5.99, confidence: .high, isIncluded: true),
-        ParsedReceiptItem(nameNormalised: "2% milk 4l", nameDisplay: "2% Milk 4L",
-                          price: 6.49, confidence: .medium, isIncluded: true),
-        ParsedReceiptItem(nameNormalised: "chkn brst 1kg", nameDisplay: "Chkn Brst 1kg",
-                          price: 14.99, confidence: .low, isIncluded: true),
-        ParsedReceiptItem(nameNormalised: "eggs dozen", nameDisplay: "Eggs Dozen",
-                          price: 5.29, confidence: .high, isIncluded: true),
+        ParsedReceiptItem(rawName: "SALTED BUTTER", normalisedName: "salted butter",
+                          parsedPrice: 5.99, confidence: .high),
+        ParsedReceiptItem(rawName: "2% MILK 4L", normalisedName: "2% milk 4l",
+                          parsedPrice: 6.49, confidence: .medium),
+        ParsedReceiptItem(rawName: "CHKN BRST 1KG", normalisedName: "chkn brst 1kg",
+                          parsedPrice: 14.99, confidence: .low),
+        ParsedReceiptItem(rawName: "EGGS DOZEN", normalisedName: "eggs dozen",
+                          parsedPrice: 5.29, confidence: .high),
     ]
     ReceiptReviewView(items: mockItems, isPresented: .constant(true))
 }

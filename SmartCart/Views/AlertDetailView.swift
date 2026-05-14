@@ -13,6 +13,7 @@
 // the exact price and type that triggered this notification.
 
 import SwiftUI
+import Combine
 
 // MARK: - AlertDetailViewModel
 
@@ -66,13 +67,13 @@ final class AlertDetailViewModel: ObservableObject {
     /// Loads item name, alert record, and rolling average from SQLite.
     func load() {
         isLoading = true
-        Task.detached(priority: .userInitiated) { [weak self] in
+        Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
 
             // Fetch alert_log row for this specific alert event
             let alertRow  = DatabaseManager.shared.fetchAlertLogRow(alertLogID: self.alertLogID)
             let items     = DatabaseManager.shared.fetchUserItems()
-            let name      = items.first(where: { $0.itemID == self.itemID })?.displayName ?? "Item"
+            let name      = items.first(where: { $0.itemID == self.itemID })?.nameDisplay ?? "Item"
             let stores    = DatabaseManager.shared.fetchSelectedStores()
             let storeName = alertRow.flatMap { row in
                 stores.first(where: { $0.id == row.storeID })?.name
@@ -81,7 +82,7 @@ final class AlertDetailViewModel: ObservableObject {
             // Rolling average from the first store with sufficient data
             var avg: Double? = nil
             for store in stores {
-                if let a = DatabaseManager.shared.rollingAverage90(itemID: self.itemID, storeID: store.id) {
+                if let a = DatabaseManager.shared.rollingAverage90(for: self.itemID, storeID: store.id) {
                     avg = a; break
                 }
             }
@@ -93,30 +94,26 @@ final class AlertDetailViewModel: ObservableObject {
                     .flatMap { DateHelper.friendlyDate($0) }
             }
 
-            await MainActor.run {
-                self.displayName    = name
-                self.alertType      = alertRow?.alertType
-                self.alertPrice     = alertRow?.triggerPrice
-                self.rollingAverage = avg
-                self.storeName      = storeName
-                self.saleEndDate    = endDate
-                self.isLoading      = false
-            }
+            self.displayName    = name
+            self.alertType      = alertRow?.alertType
+            self.alertPrice     = alertRow?.triggerPrice
+            self.rollingAverage = avg
+            self.storeName      = storeName
+            self.saleEndDate    = endDate
+            self.isLoading      = false
         }
     }
 
     /// Records a purchase at the alert price and dismisses.
     func markAsPurchased(dismissAction: @escaping () -> Void) {
         guard let price = alertPrice else { return }
-        Task.detached(priority: .userInitiated) { [weak self] in
+        Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             let today = DateHelper.todayString()
             DatabaseManager.shared.insertPurchase(
                 itemID: self.itemID, storeID: nil, price: price, date: today, source: "alert")
-            await MainActor.run {
-                self.purchaseConfirmed = true
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { dismissAction() }
-            }
+            self.purchaseConfirmed = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { dismissAction() }
         }
     }
 }

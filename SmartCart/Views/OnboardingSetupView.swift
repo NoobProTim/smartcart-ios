@@ -121,7 +121,7 @@ struct OnboardingSetupView: View {
                     //   1. Uppercase every character as typed (no manual Shift required)
                     //   2. Cap at 7 characters (A1A 1A1 with space)
                     //   3. Clear the error once the user edits the field
-                    .onChange(of: postalCode) { newValue in
+                    .onChange(of: postalCode) { _, newValue in
                         // Step 1: auto-uppercase
                         let upped = newValue.uppercased()
                         // Step 2: cap at 7 characters ("A1A 1A1" = 7 chars with space)

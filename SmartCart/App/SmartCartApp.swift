@@ -8,9 +8,11 @@ import SwiftUI
 @main
 struct SmartCartApp: App {
 
+    @StateObject private var notificationRouter = NotificationRouter()
+
     init() {
         // Must be called before applicationDidFinishLaunching completes.
-        BackgroundSyncManager.shared.registerTasks()
+        BackgroundSyncManager.shared.registerBackgroundTask()
         BackgroundSyncManager.shared.scheduleNextRefresh()
         // Open the database and run migrations.
         _ = DatabaseManager.shared
@@ -19,6 +21,7 @@ struct SmartCartApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environmentObject(notificationRouter)
         }
     }
 }
