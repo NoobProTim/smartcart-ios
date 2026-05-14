@@ -23,6 +23,7 @@ struct MultiShotCaptureView: View {
     @State private var showPermissionSheet        = false
     @State private var errorMessage: String?      = nil
     @State private var reviewItems: [ParsedReceiptItem]? = nil
+    @State private var captureHapticTrigger       = 0
 
     @Environment(\.dismiss) private var dismiss
 
@@ -75,6 +76,7 @@ struct MultiShotCaptureView: View {
                         } else {
                             capturedImages.append(image)
                         }
+                        captureHapticTrigger += 1
                         selectedIndex = nil
                         errorMessage  = nil
                     },
@@ -106,6 +108,7 @@ struct MultiShotCaptureView: View {
             }
         }
         .onAppear { openCameraIfEmpty() }
+        .sensoryFeedback(.impact(weight: .light), trigger: captureHapticTrigger)
     }
 
     // MARK: - Subviews
@@ -130,8 +133,10 @@ struct MultiShotCaptureView: View {
             Image(systemName: "checkmark.circle.fill")
                 .font(.system(size: 48))
                 .foregroundStyle(.green)
+                .symbolEffect(.bounce, value: capturedImages.count)
             Text("\(capturedImages.count) shot\(capturedImages.count == 1 ? "" : "s") captured")
                 .font(.headline)
+                .monospacedDigit()
             Text("Add more shots or tap Process.")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
@@ -150,6 +155,9 @@ struct MultiShotCaptureView: View {
         }
         .frame(height: 160)
         .background(Color(.systemGroupedBackground))
+        .overlay(alignment: .top) {
+            Divider()
+        }
     }
 
     private func thumbnailCell(index: Int) -> some View {

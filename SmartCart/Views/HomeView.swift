@@ -30,6 +30,7 @@ struct HomeView: View {
     @State private var showScanner = false
     @State private var refreshSubtitle: String? = nil
     @State private var isRefreshing = false
+    @State private var groceryAddedTrigger = 0
 
     var body: some View {
         NavigationStack {
@@ -80,6 +81,7 @@ struct HomeView: View {
         .sheet(isPresented: $showScanner, onDismiss: { viewModel.load() }) {
             MultiShotCaptureView()
         }
+        .sensoryFeedback(.success, trigger: groceryAddedTrigger)
         .onAppear {
             viewModel.load()
             checkNotificationPermission()
@@ -111,6 +113,9 @@ struct HomeView: View {
                                 .foregroundStyle(.secondary)
                             Text(viewModel.annualSavings, format: .currency(code: "CAD"))
                                 .font(.system(size: 22, weight: .bold))
+                                .monospacedDigit()
+                                .contentTransition(.numericText())
+                                .animation(.spring(duration: 0.4), value: viewModel.annualSavings)
                             Text("vs. your average prices this year")
                                 .font(.system(size: 12))
                                 .foregroundStyle(.secondary)
@@ -118,6 +123,18 @@ struct HomeView: View {
                         Spacer()
                     }
                     .padding(.vertical, 6)
+                    .listRowBackground(
+                        ZStack {
+                            Color(.secondarySystemGroupedBackground)
+                            LinearGradient(
+                                colors: [Color.green.opacity(0.10), Color.clear],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .shadow(color: Color.green.opacity(0.08), radius: 4, y: 2)
+                    )
                 }
             }
 
@@ -150,7 +167,7 @@ struct HomeView: View {
                     }
                 } header: {
                     Text("Grocery List")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold).smallCaps())
                         .foregroundStyle(.secondary)
                         .textCase(nil)
                 }
@@ -165,6 +182,7 @@ struct HomeView: View {
                                     itemID: item.itemID,
                                     expectedPrice: sale.salePrice
                                 )
+                                groceryAddedTrigger += 1
                                 viewModel.load()
                             } label: {
                                 DealRowView(
@@ -178,7 +196,7 @@ struct HomeView: View {
                     }
                 } header: {
                     Text("Today's Deals")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold).smallCaps())
                         .foregroundStyle(.secondary)
                         .textCase(nil)
                 }
@@ -194,7 +212,7 @@ struct HomeView: View {
             } header: {
                 if !viewModel.items.isEmpty {
                     Text("Your Items")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold).smallCaps())
                         .foregroundStyle(.secondary)
                         .textCase(nil)
                 }
@@ -202,6 +220,8 @@ struct HomeView: View {
         }
         .listStyle(.insetGrouped)
         .animation(.easeInOut(duration: 0.25), value: viewModel.items.count)
+        .animation(.spring(duration: 0.35, bounce: 0.15), value: viewModel.groceryList.count)
+        .animation(.spring(duration: 0.35, bounce: 0.15), value: viewModel.annualSavings > 0)
     }
 
     // MARK: - deepLinkDestination
@@ -290,6 +310,7 @@ struct SmartListRowView: View {
                 if let restockDate = item.nextRestockDate {
                     Text(restockSubtitle(restockDate: restockDate))
                         .font(.system(size: 12))
+                        .fontDesign(.rounded)
                         .foregroundStyle(item.isInRestockWindow ? Color.accentColor : .secondary)
                 }
             }
@@ -299,6 +320,7 @@ struct SmartListRowView: View {
             if let price = item.lastPurchasedPrice {
                 Text(String(format: "$%.2f", price))
                     .font(.system(size: 14))
+                    .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
         }
@@ -341,9 +363,18 @@ struct DealRowView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                 if let low = historicalLow {
-                    Text("\(low.label): \(low.price, format: .currency(code: "CAD"))")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.green)
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.down")
+                            .font(.system(size: 9, weight: .bold))
+                        Text(low.price, format: .currency(code: "CAD"))
+                            .font(.system(size: 11, weight: .semibold))
+                            .monospacedDigit()
+                    }
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.green.opacity(0.12))
+                    .clipShape(Capsule())
                 }
             }
 
@@ -352,6 +383,7 @@ struct DealRowView: View {
             VStack(alignment: .trailing, spacing: 2) {
                 Text(String(format: "$%.2f", deal.salePrice))
                     .font(.system(size: 14, weight: .semibold))
+                    .monospacedDigit()
                     .foregroundStyle(Color.accentColor)
                 if let days = deal.expiresInDays() {
                     Text(days == 0 ? "Ends today" : "Ends in \(days)d")
