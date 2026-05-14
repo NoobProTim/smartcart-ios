@@ -14,6 +14,11 @@
 //
 // All DB reads happen on a background Task; @Published updates are
 // dispatched back to the main actor automatically via @MainActor.
+//
+// #17 fix: Removed redundant engine.updateOnPurchase() call from markAsPurchased().
+//   DatabaseManager.markPurchased() already calls recalculateReplenishment() which
+//   delegates to ReplenishmentEngine — the engine was running twice per purchase.
+//   Single authoritative call chain: DB write → recalculateReplenishment() → engine.
 
 import Foundation
 import Combine
@@ -72,18 +77,20 @@ final class HomeViewModel: ObservableObject {
     }
 
     /// Records a purchase for an item.
-    /// Uses DatabaseManager.markPurchased() which is atomic (Fix P0-1).
+    /// Uses DatabaseManager.markPurchased() which is atomic (Fix P0-1) and
+    /// calls recalculateReplenishment() internally — ReplenishmentEngine is
+    /// triggered exactly once per purchase via that DB call.
     /// Quantity defaults to 1; pass a higher value for bulk purchases
-    /// (ReplenishmentEngine will scale the restock date accordingly).
+    /// (ReplenishmentEngine.updateOnPurchase will scale the restock date).
     func markAsPurchased(item: UserItem, price: Double?, quantity: Int = 1) {
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
+            // #17: Only one engine call path exists:
+            //   markPurchased() → recalculateReplenishment() → ReplenishmentEngine
+            // The previous redundant engine.updateOnPurchase() call has been removed.
             self.db.markPurchased(itemID: item.itemID,
                                   priceAtPurchase: price,
                                   quantity: quantity)
-            // After writing, tell ReplenishmentEngine to update the
-            // next_restock_date with quantity scaling applied.
-            self.engine.updateOnPurchase(itemID: item.itemID, quantity: quantity)
             await self.load()
         }
     }

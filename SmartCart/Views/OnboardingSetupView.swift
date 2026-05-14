@@ -13,6 +13,11 @@
 //
 // PRISM P1-9: Canadian postal code format is validated before saving.
 // PRISM P1-4: This screen is only reached after the carousel, never cold.
+//
+// #12 fix: Postal code TextField now auto-uppercases and caps input at 7 chars.
+//   Next button is disabled until the field is either empty (skip path)
+//   or passes isValidCanadianPostalCode(). Prevents tapping Next on a
+//   half-typed code and seeing a jarring error shake.
 
 import SwiftUI
 import UserNotifications
@@ -31,6 +36,15 @@ struct OnboardingSetupView: View {
         "No Frills", "Loblaws", "Metro", "Food Basics",
         "Sobeys", "FreshCo", "Giant Tiger", "Walmart", "Costco", "T&T"
     ]
+
+    // #12: Next button in postalStep is enabled only when field is empty
+    // (user will tap Skip instead) OR the code passes Canadian format check.
+    // This prevents tapping Next with a partial entry and hitting the error.
+    private var isPostalNextEnabled: Bool {
+        let stripped = postalCode.replacingOccurrences(of: " ", with: "")
+        if stripped.isEmpty { return true }  // empty = skip path, always allow
+        return isValidCanadianPostalCode(stripped.uppercased())
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -103,7 +117,19 @@ struct OnboardingSetupView: View {
                     .textInputAutocapitalization(.characters)
                     .keyboardType(.asciiCapable)
                     .font(.system(size: 24, weight: .medium, design: .monospaced))
-                    .onChange(of: postalCode) { _ in postalCodeError = nil }
+                    // #12: Three .onChange effects — order matters:
+                    //   1. Uppercase every character as typed (no manual Shift required)
+                    //   2. Cap at 7 characters (A1A 1A1 with space)
+                    //   3. Clear the error once the user edits the field
+                    .onChange(of: postalCode) { newValue in
+                        // Step 1: auto-uppercase
+                        let upped = newValue.uppercased()
+                        // Step 2: cap at 7 characters ("A1A 1A1" = 7 chars with space)
+                        let capped = upped.count > 7 ? String(upped.prefix(7)) : upped
+                        if capped != postalCode { postalCode = capped }
+                        // Step 3: clear error on any change so the red text disappears
+                        postalCodeError = nil
+                    }
                     .padding(.horizontal, 20)
                     .accessibilityLabel("Postal code input")
 
@@ -131,15 +157,19 @@ struct OnboardingSetupView: View {
                     .accessibilityLabel("Skip postal code")
                     .padding(.leading, 20)
 
-                primaryButton(label: "Next", isEnabled: true) {
+                // #12: isEnabled now uses isPostalNextEnabled so the button
+                // stays grey until the code is valid (or the field is empty).
+                primaryButton(label: "Next", isEnabled: isPostalNextEnabled) {
                     let normalised = postalCode.uppercased().replacingOccurrences(of: " ", with: "")
                     if normalised.isEmpty {
-                        // Empty is fine — same as skip
+                        // Empty — treat as skip
                         currentStep = 2
                     } else if isValidCanadianPostalCode(normalised) {
                         DatabaseManager.shared.setSetting(key: "user_postal_code", value: normalised)
                         currentStep = 2
                     } else {
+                        // Should rarely fire now that button is disabled for invalid input,
+                        // but kept as a safety net (e.g. paste of a long value).
                         withAnimation { postalCodeError = "Enter a valid Canadian postal code (e.g. K7L 3N6)" }
                     }
                 }
@@ -183,7 +213,7 @@ struct OnboardingSetupView: View {
                         isEnabled: true
                     ) { requestNotifications() }
                 } else {
-                    primaryButton(label: "Alerts enabled \u2714", isEnabled: false) {}
+                    primaryButton(label: "Alerts enabled ✔", isEnabled: false) {}
                 }
 
                 Button("Maybe later") { onComplete() }
@@ -217,7 +247,7 @@ struct OnboardingSetupView: View {
         }
     }
 
-    // PRISM P1-9: Validates Canadian postal code format A1A1A1 (spaces stripped).
+    // PRISM P1-9 / #12: Validates Canadian postal code format A1A1A1 (spaces stripped).
     // Valid: letters in positions 0,2,4; digits in positions 1,3,5.
     // First character must not be D, F, I, O, Q, or U (reserved by Canada Post).
     private func isValidCanadianPostalCode(_ code: String) -> Bool {
