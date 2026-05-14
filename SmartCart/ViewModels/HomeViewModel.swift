@@ -80,6 +80,16 @@ final class HomeViewModel: ObservableObject {
         }
     }
 
+    /// Adds a new item to the user's smart list by name.
+    func addItem(nameDisplay: String) {
+        let nameNorm = NameNormaliser.normalise(nameDisplay)
+        Task {
+            let iid = db.upsertItem(nameNormalised: nameNorm, nameDisplay: nameDisplay)
+            db.upsertUserItem(itemIDValue: iid)
+            load()
+        }
+    }
+
     /// Records a purchase for an item.
     /// Uses DatabaseManager.markPurchased() which is atomic (Fix P0-1) and
     /// calls recalculateReplenishment() internally — ReplenishmentEngine is

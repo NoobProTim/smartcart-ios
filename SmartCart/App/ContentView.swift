@@ -7,7 +7,7 @@ import SwiftUI
 struct ContentView: View {
     var body: some View {
         TabView {
-            SmartListView()
+            HomeView()
                 .tabItem {
                     Label("Smart List", systemImage: "cart")
                 }
@@ -15,10 +15,12 @@ struct ContentView: View {
                 .tabItem {
                     Label("Scan", systemImage: "camera")
                 }
-            SettingsView()
-                .tabItem {
-                    Label("Settings", systemImage: "gearshape")
-                }
+            NavigationStack {
+                SettingsView()
+            }
+            .tabItem {
+                Label("Settings", systemImage: "gearshape")
+            }
         }
     }
 }

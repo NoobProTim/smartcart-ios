@@ -28,6 +28,8 @@ struct HomeView: View {
     @State private var deepLinkedItemID: Int64? = nil
     @State private var showNotificationBanner = false
     @State private var showScanner = false
+    @State private var showAddItem = false
+    @State private var newItemName = ""
     @State private var refreshSubtitle: String? = nil
     @State private var isRefreshing = false
     @State private var groceryAddedTrigger = 0
@@ -45,13 +47,17 @@ struct HomeView: View {
             .navigationSubtitle(refreshSubtitle ?? "")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showScanner = true
-                    } label: {
-                        Image(systemName: "camera.viewfinder")
-                            .font(.system(size: 18))
+                    HStack(spacing: 16) {
+                        Button { showAddItem = true } label: {
+                            Image(systemName: "plus")
+                        }
+                        .accessibilityLabel("Add item manually")
+                        Button { showScanner = true } label: {
+                            Image(systemName: "camera.viewfinder")
+                                .font(.system(size: 18))
+                        }
+                        .accessibilityLabel("Scan a receipt")
                     }
-                    .accessibilityLabel("Scan a receipt")
                 }
             }
             .refreshable {
@@ -80,6 +86,9 @@ struct HomeView: View {
         }
         .sheet(isPresented: $showScanner, onDismiss: { viewModel.load() }) {
             MultiShotCaptureView()
+        }
+        .sheet(isPresented: $showAddItem) {
+            addItemSheet
         }
         .sensoryFeedback(.success, trigger: groceryAddedTrigger)
         .onAppear {
@@ -283,6 +292,44 @@ struct HomeView: View {
                 showNotificationBanner = settings.authorizationStatus == .denied
             }
         }
+    }
+}
+
+// MARK: - addItemSheet (extension on HomeView)
+extension HomeView {
+    var addItemSheet: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    TextField("e.g. Salted Butter", text: $newItemName)
+                        .autocorrectionDisabled()
+                        .submitLabel(.done)
+                        .onSubmit { submitAddItem() }
+                } header: {
+                    Text("Item name")
+                }
+            }
+            .navigationTitle("Add Item")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { newItemName = ""; showAddItem = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") { submitAddItem() }
+                        .disabled(newItemName.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+            }
+        }
+        .presentationDetents([.medium])
+    }
+
+    private func submitAddItem() {
+        let name = newItemName.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty else { return }
+        viewModel.addItem(nameDisplay: name)
+        newItemName  = ""
+        showAddItem = false
     }
 }
 

@@ -50,6 +50,7 @@ struct ItemDetailView: View {
     @State private var item: UserItem?
     @State private var storeName: String     = ""
     @State private var currentPrice: Double? = nil
+    @State private var historicalLow: (price: Double, label: String)? = nil
 
     var body: some View {
         ScrollView {
@@ -165,6 +166,33 @@ struct ItemDetailView: View {
                 }
                 .padding(.bottom, flippNoData ? 0 : 12)
 
+                // MARK: Historical low card
+                if let low = historicalLow {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Historical Low")
+                                .font(.system(size: 11, weight: .semibold).smallCaps())
+                                .foregroundStyle(.secondary)
+                            Text(low.price, format: .currency(code: "CAD"))
+                                .font(.title2.weight(.semibold))
+                                .foregroundStyle(.green)
+                                .monospacedDigit()
+                            Text(low.label)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chart.line.downtrend.xyaxis")
+                            .font(.system(size: 28))
+                            .foregroundStyle(.green.opacity(0.6))
+                    }
+                    .padding()
+                    .background(Color.green.opacity(0.06))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
+                }
+
                 Divider()
 
                 // MARK: Alert status row
@@ -261,6 +289,7 @@ struct ItemDetailView: View {
         let noDataKey   = "flipp_no_data_\(itemID)"
         let noDataValue = db.getSetting(key: noDataKey)
         flippNoData     = (noDataValue != nil)
+        historicalLow   = db.historicalLow(for: itemID)
     }
 
     // MARK: - retryFlipp()
