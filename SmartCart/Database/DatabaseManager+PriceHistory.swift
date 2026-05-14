@@ -72,4 +72,53 @@ extension DatabaseManager {
             )
         }
     }
+
+    func historicalLow(for itemID: Int64) -> (price: Double, label: String)? {
+        let cal   = Calendar.current
+        let today = Date()
+        let month = cal.component(.month, from: today)
+        let year  = cal.component(.year,  from: today)
+
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd"
+
+        let startStr: String
+        let endStr:   String
+        let label:    String
+
+        if month == 1 {
+            startStr = "\(year - 1)-01-01"
+            endStr   = "\(year - 1)-03-31"
+            label    = "Based on last Jan\u{2013}Mar"
+        } else {
+            startStr = "\(year)-01-01"
+            endStr   = fmt.string(from: today)
+            label    = "Lowest this year"
+        }
+
+        guard let start = fmt.date(from: startStr),
+              let end   = fmt.date(from: endStr) else { return nil }
+
+        let phRows = try? db.prepare(
+            priceHistoryTable
+                .filter(priceHistItemID == itemID &&
+                        priceHistDate   >= start  &&
+                        priceHistDate   <= end)
+                .select(priceHistPrice)
+        )
+        let phMin = phRows?.compactMap { $0[priceHistPrice] }.min()
+
+        let purchRows = try? db.prepare(
+            purchaseHistoryTable
+                .filter(purchaseItemID == itemID &&
+                        purchasedAt    >= start  &&
+                        purchasedAt    <= end)
+                .select(purchasePrice)
+        )
+        let purchMin = purchRows?.compactMap { $0[purchasePrice] }.min()
+
+        let candidates = [phMin, purchMin].compactMap { $0 }
+        guard let lowest = candidates.min() else { return nil }
+        return (price: lowest, label: label)
+    }
 }
