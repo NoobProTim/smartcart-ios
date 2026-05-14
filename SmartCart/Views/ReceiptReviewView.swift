@@ -25,9 +25,12 @@ final class ReceiptReviewViewModel: ObservableObject {
     @Published var saveComplete = false
     @Published var saveError: String? = nil
 
-    init(items: [ParsedReceiptItem]) {
+    private let storeID: Int64?
+
+    init(items: [ParsedReceiptItem], storeID: Int64? = nil) {
         // Start with all items included. User can uncheck any.
         self.editableItems = items.map { EditableReceiptItem(source: $0) }
+        self.storeID = storeID
     }
 
     /// Returns only the items the user has checked for inclusion.
@@ -63,7 +66,7 @@ final class ReceiptReviewViewModel: ObservableObject {
                 // Write a purchase_history row for this receipt line
                 if let price = editable.source.parsedPrice {
                     DatabaseManager.shared.insertPurchase(
-                        itemID: itemID, storeID: nil, price: price, date: today, source: "receipt")
+                        itemID: itemID, storeID: storeID, price: price, date: today, source: "receipt")
                 }
 
                 // Mark as purchased on the grocery list if it was there
@@ -96,10 +99,12 @@ struct EditableReceiptItem: Identifiable {
 struct ReceiptReviewView: View {
     @StateObject private var vm: ReceiptReviewViewModel
     @Binding var isPresented: Bool // set to false to dismiss the whole scan flow
+    let storeName: String?
 
-    init(items: [ParsedReceiptItem], isPresented: Binding<Bool>) {
-        _vm = StateObject(wrappedValue: ReceiptReviewViewModel(items: items))
+    init(items: [ParsedReceiptItem], storeID: Int64? = nil, storeName: String? = nil, isPresented: Binding<Bool>) {
+        _vm = StateObject(wrappedValue: ReceiptReviewViewModel(items: items, storeID: storeID))
         _isPresented = isPresented
+        self.storeName = storeName
     }
 
     var body: some View {
@@ -120,7 +125,7 @@ struct ReceiptReviewView: View {
                     reviewList
                 }
             }
-            .navigationTitle("Review Receipt")
+            .navigationTitle(storeName.map { "Review · \($0)" } ?? "Review Receipt")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -250,5 +255,5 @@ struct ReceiptItemRow: View {
         ParsedReceiptItem(rawName: "EGGS DOZEN", normalisedName: "eggs dozen",
                           parsedPrice: 5.29, confidence: .high),
     ]
-    ReceiptReviewView(items: mockItems, isPresented: .constant(true))
+    ReceiptReviewView(items: mockItems, storeName: "No Frills", isPresented: .constant(true))
 }

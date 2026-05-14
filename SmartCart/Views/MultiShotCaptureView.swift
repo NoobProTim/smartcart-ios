@@ -24,6 +24,8 @@ struct MultiShotCaptureView: View {
     @State private var errorMessage: String?      = nil
     @State private var reviewItems: [ParsedReceiptItem]? = nil
     @State private var captureHapticTrigger       = 0
+    @State private var stores: [Store]            = []
+    @State private var selectedStore: Store?      = nil
 
     @Environment(\.dismiss) private var dismiss
 
@@ -65,6 +67,36 @@ struct MultiShotCaptureView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
+                ToolbarItem(placement: .principal) {
+                    if !stores.isEmpty {
+                        Menu {
+                            ForEach(stores) { store in
+                                Button {
+                                    selectedStore = store
+                                } label: {
+                                    if selectedStore?.id == store.id {
+                                        Label(store.name, systemImage: "checkmark")
+                                    } else {
+                                        Text(store.name)
+                                    }
+                                }
+                            }
+                            Divider()
+                            Button("No store") { selectedStore = nil }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(selectedStore?.name ?? "Select Store")
+                                    .font(.headline)
+                                Image(systemName: "chevron.down")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                            .foregroundStyle(selectedStore == nil ? .secondary : .primary)
+                        }
+                    } else {
+                        Text("Scan Receipt")
+                            .font(.headline)
+                    }
+                }
             }
             .fullScreenCover(isPresented: $showCamera) {
                 CameraPickerView(
@@ -99,6 +131,8 @@ struct MultiShotCaptureView: View {
                 if let items = reviewItems {
                     ReceiptReviewView(
                         items: items,
+                        storeID: selectedStore?.id,
+                        storeName: selectedStore?.name,
                         isPresented: Binding(
                             get: { reviewItems != nil },
                             set: { if !$0 { reviewItems = nil } }
@@ -107,7 +141,11 @@ struct MultiShotCaptureView: View {
                 }
             }
         }
-        .onAppear { openCameraIfEmpty() }
+        .onAppear {
+            stores = DatabaseManager.shared.fetchSelectedStores()
+            if selectedStore == nil { selectedStore = stores.first }
+            openCameraIfEmpty()
+        }
         .sensoryFeedback(.impact(weight: .light), trigger: captureHapticTrigger)
     }
 
