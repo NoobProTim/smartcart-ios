@@ -167,7 +167,11 @@ struct HomeView: View {
                                 )
                                 viewModel.load()
                             } label: {
-                                DealRowView(deal: sale, itemName: item.nameDisplay)
+                                DealRowView(
+                                    deal: sale,
+                                    itemName: item.nameDisplay,
+                                    historicalLow: DatabaseManager.shared.historicalLow(for: item.itemID)
+                                )
                             }
                             .buttonStyle(.plain)
                         }
@@ -321,6 +325,7 @@ struct DealRowView: View {
     let deal: FlyerSale
     var itemName: String = ""
     var storeName: String = ""
+    var historicalLow: (price: Double, label: String)? = nil
 
     var body: some View {
         HStack(spacing: 12) {
@@ -335,6 +340,11 @@ struct DealRowView: View {
                 Text(storeName.isEmpty ? "Your store" : storeName)
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
+                if let low = historicalLow {
+                    Text("\(low.label): \(low.price, format: .currency(code: "CAD"))")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.green)
+                }
             }
 
             Spacer()

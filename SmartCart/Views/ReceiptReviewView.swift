@@ -65,6 +65,9 @@ final class ReceiptReviewViewModel: ObservableObject {
                     DatabaseManager.shared.insertPurchase(
                         itemID: itemID, storeID: nil, price: price, date: today, source: "receipt")
                 }
+
+                // Mark as purchased on the grocery list if it was there
+                DatabaseManager.shared.markGroceryListItemPurchased(itemID: itemID)
             }
 
             isSaving = false
