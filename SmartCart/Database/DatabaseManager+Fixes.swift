@@ -3,19 +3,27 @@
 //
 // P1-E fixes + DB helpers for ReplenishmentEngine.
 //
-// REPLENISHMENT DELEGATION (Issue #14 fix):
-//   recalculateReplenishment() previously contained median + date math inline.
-//   It now delegates entirely to ReplenishmentEngine.shared.updateOnPurchase().
+// REPLENISHMENT DELEGATION (BLOCKER-1 fix — Task #6):
+//   recalculateReplenishment() now explicitly branches on quantity:
+//     quantity == 1  → ReplenishmentEngine.shared.recalculate(for:)
+//                      Standard single-unit path. No scaling needed.
+//                      This is the call PRISM required at BLOCKER-1.
+//     quantity  > 1  → ReplenishmentEngine.shared.updateOnPurchase(itemID:quantity:)
+//                      Quantity-scaling path (P2-4). Defers to engine.
+//
+//   Previously the shim called updateOnPurchase() for ALL quantities.
+//   updateOnPurchase() internally routes qty==1 → recalculate(), so behaviour
+//   was equivalent — but PRISM correctly flagged that the single-unit path
+//   should call recalculate(for:) directly, making the delegation explicit
+//   and readable at the shim level.
+//
 //   DatabaseManager is data-only — it reads and writes rows.
 //   ReplenishmentEngine owns all cycle inference and date calculation.
 //
 //   Call chain after this fix:
-//     markPurchased() → recalculateReplenishment() → ReplenishmentEngine.updateOnPurchase()
-//     markPurchasedOnDate() → recalculateReplenishment() → ReplenishmentEngine.updateOnPurchase()
-//
-//   fetchCycleDays(for:) is kept here as a raw SQLite read.
-//   ReplenishmentEngine.inferCycleDays() calls it to get gap dates.
-//   The DB fetches data; the engine decides what it means.
+//     markPurchased()        → recalculateReplenishment(qty:1)  → engine.recalculate(for:)
+//     markPurchased(qty:N)   → recalculateReplenishment(qty:N)  → engine.updateOnPurchase()
+//     markPurchasedOnDate()  → recalculateReplenishment(qty:1)  → engine.recalculate(for:)
 
 import Foundation
 import SQLite
@@ -54,17 +62,25 @@ extension DatabaseManager {
     }
 
     // MARK: - recalculateReplenishment(itemID:quantity:)
-    // Previously contained median + date math inline. Now data-only: delegates
-    // to ReplenishmentEngine so inference logic lives in exactly one place.
+    // BLOCKER-1 fix (Task #6):
+    //   Single-unit purchases (qty == 1) now call recalculate(for:) directly.
+    //   This is the explicit delegation path PRISM required.
+    //   Multi-unit purchases (qty > 1) still call updateOnPurchase() so that
+    //   quantity scaling (P2-4) is applied — the scaled restock date is only
+    //   computed inside updateOnPurchase().
     //
-    // WHY KEEP THIS FUNCTION AT ALL:
+    // WHY KEEP THIS WRAPPER:
     //   markPurchasedOnDate() in DatabaseManager+Purchases.swift calls it by name.
     //   Keeping the wrapper means that file needs no change.
-    //   The wrapper is a single delegation line — it adds no logic.
     func recalculateReplenishment(itemID: Int64, quantity: Int) {
-        // All cycle inference and next-restock-date calculation lives in ReplenishmentEngine.
-        // This function is now a pure delegation shim — no math here.
-        ReplenishmentEngine.shared.updateOnPurchase(itemID: itemID, quantity: quantity)
+        if quantity <= 1 {
+            // Standard single-unit path — call recalculate(for:) directly.
+            // PRISM BLOCKER-1 required this explicit delegation.
+            ReplenishmentEngine.shared.recalculate(for: itemID)
+        } else {
+            // Bulk purchase path — updateOnPurchase() applies quantity scaling (P2-4).
+            ReplenishmentEngine.shared.updateOnPurchase(itemID: itemID, quantity: quantity)
+        }
     }
 
     // MARK: - updateSeasonalFlag(itemID:)
@@ -154,7 +170,6 @@ extension DatabaseManager {
             if days > 0 { intervals.append(days) }
         }
         guard !intervals.isEmpty else { return nil }
-        // Raw median — engine applies its own threshold + clamping. This is just the data.
         let sorted = intervals.sorted()
         return sorted[sorted.count / 2]
     }

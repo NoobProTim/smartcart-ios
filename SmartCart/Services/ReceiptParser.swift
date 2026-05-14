@@ -5,7 +5,17 @@
 //
 // P0-2 Fix: ScanResult enum replaces the old Bool return type.
 // This lets ReceiptScannerView show a specific error banner for each failure mode
-// instead of a single generic “scan failed” message.
+// instead of a single generic "scan failed" message.
+//
+// HIGH-4 fix (Task #6):
+//   parse() now calls CategoryClassifier.classify(normalisedName:) for each candidate
+//   and stores the result in ParsedReceiptItem.suggestedCycleDays.
+//   ReplenishmentEngine uses this as the seed cycle for new items until enough
+//   purchase history accumulates for inference (>= 3 purchases).
+//
+// scanReceipt(image:) merged back in (Task #6):
+//   Previously lived in ReceiptParser+Fixes.swift (now deleted — compile conflict).
+//   Owned by this file going forward. ScanResult cases are canonical here.
 //
 // Pipeline:
 //   1. Split raw text into lines
@@ -13,11 +23,15 @@
 //   3. Extract price from the line or adjacent lines
 //   4. Normalise item name via NameNormaliser
 //   5. Score confidence
-//   6. Return ScanResult.success([ParsedReceiptItem]) or a specific failure case
+//   6. Classify category → suggestedCycleDays via CategoryClassifier
+//   7. Return ScanResult.success([ParsedReceiptItem]) or a specific failure case
 
+import UIKit
+import Vision
 import Foundation
 
 // P0-2: Typed result — ReceiptScannerView switches on this to choose the right banner.
+// CANONICAL definition — do not redeclare in any extension file.
 enum ScanResult {
     case success([ParsedReceiptItem])  // At least 1 item found
     case noItemsFound                  // OCR ran but 0 products identified
@@ -28,8 +42,8 @@ enum ScanResult {
 
 enum ReceiptParser {
 
-    // MARK: - Main entry point
-
+    // MARK: - parse(rawText:)
+    // Main text-parsing entry point.
     // Call this with the full OCR output string from VNRecognizeTextRequest.
     // Returns a ScanResult — handle every case in ReceiptScannerView.
     static func parse(rawText: String) -> ScanResult {
@@ -42,16 +56,66 @@ enum ReceiptParser {
 
         let candidates = lines.enumerated().compactMap { (index, line) -> ParsedReceiptItem? in
             guard !isNoiseLine(line) else { return nil }
-            let price = extractPrice(from: line) ?? extractPrice(fromAdjacentLines: lines, index: index)
-            let raw = stripPrice(from: line)
+            let price      = extractPrice(from: line) ?? extractPrice(fromAdjacentLines: lines, index: index)
+            let raw        = stripPrice(from: line)
             guard raw.count >= 3 else { return nil }  // ignore very short strings
             let normalised = NameNormaliser.normalise(raw)
             let confidence = score(name: raw, price: price)
-            return ParsedReceiptItem(rawName: raw, normalisedName: normalised,
-                                     parsedPrice: price, confidence: confidence)
+
+            // HIGH-4: classify returns a category-appropriate cycle in days,
+            // or nil if no keyword match (engine will use 14-day default).
+            let cycleDays  = CategoryClassifier.classify(normalisedName: normalised)
+
+            return ParsedReceiptItem(
+                rawName: raw,
+                normalisedName: normalised,
+                parsedPrice: price,
+                confidence: confidence,
+                suggestedCycleDays: cycleDays
+            )
         }
 
         return candidates.isEmpty ? .noItemsFound : .success(candidates)
+    }
+
+    // MARK: - scanReceipt(image:)
+    // Image-scanning entry point — wraps Vision OCR and delegates to parse(rawText:).
+    // Merged back from deleted ReceiptParser+Fixes.swift (Task #6 cleanup).
+    // Use this when you have a UIImage; use parse(rawText:) when you already
+    // have the OCR string (e.g. in tests or from a live VNRecognizeTextRequest callback).
+    //
+    // Returns a typed ScanResult:
+    //   .imageError  — image.cgImage was nil; can't process
+    //   .noItemsFound / .emptyInput — Vision ran but found nothing useful
+    //   .success([ParsedReceiptItem]) — at least one item extracted
+    static func scanReceipt(image: UIImage) -> ScanResult {
+        guard let cgImage = image.cgImage else { return .unknownError("cgImage was nil") }
+
+        var recognisedLines: [String] = []
+        let semaphore = DispatchSemaphore(value: 0)
+
+        let request = VNRecognizeTextRequest { request, error in
+            defer { semaphore.signal() }
+            guard error == nil,
+                  let observations = request.results as? [VNRecognizedTextObservation]
+            else { return }
+            recognisedLines = observations.compactMap { $0.topCandidates(1).first?.string }
+        }
+        request.recognitionLevel = .accurate
+
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        try? handler.perform([request])
+
+        // Wait up to 10 seconds for Vision to finish.
+        // On a current-generation iPhone the accurate pass takes < 2 s for a full receipt.
+        guard semaphore.wait(timeout: .now() + 10) != .timedOut else {
+            return .unknownError("Vision timed out after 10 seconds")
+        }
+
+        guard !recognisedLines.isEmpty else { return .emptyInput }
+
+        let rawText = recognisedLines.joined(separator: "\n")
+        return parse(rawText: rawText)
     }
 
     // MARK: - Noise detection
@@ -89,7 +153,7 @@ enum ReceiptParser {
         return nil
     }
 
-    // Removes the price portion from a name string so it isn’t included in the display name.
+    // Removes the price portion from a name string so it isn't included in the display name.
     private static func stripPrice(from line: String) -> String {
         let pattern = #"\s*\d+[.,]\d{2}\s*[A-Z]?$"#
         return line.replacingOccurrences(of: pattern, with: "",
