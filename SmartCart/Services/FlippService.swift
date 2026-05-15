@@ -31,13 +31,15 @@ struct FlippItem: Decodable {
     let originalPrice: Double?
     let validTo:       String?
     let storeCode:     String?
+    let saleStory:     String?
 
     enum CodingKeys: String, CodingKey {
         case name
         case currentPrice  = "current_price"
         case originalPrice = "original_price"
         case validTo       = "valid_to"
-        case storeCode     = "merchant_name"   // was "retailer_name" — API field is merchant_name
+        case storeCode     = "merchant_name"
+        case saleStory     = "sale_story"
     }
 
     init(from decoder: Decoder) throws {
@@ -45,6 +47,7 @@ struct FlippItem: Decodable {
         name      = try c.decode(String.self, forKey: .name)
         validTo   = try? c.decode(String.self, forKey: .validTo)
         storeCode = try? c.decode(String.self, forKey: .storeCode)
+        saleStory = try? c.decode(String.self, forKey: .saleStory)
         if let d = try? c.decode(Double.self, forKey: .currentPrice) {
             currentPrice = d
         } else if let s = try? c.decode(String.self, forKey: .currentPrice), let d = Double(s) {
@@ -232,13 +235,39 @@ extension FlyerDeal {
     init?(flippItem: FlippItem) {
         guard flippItem.currentPrice > 0.01,
               let store = flippItem.storeCode, !store.isEmpty else { return nil }
-        let fmt       = ISO8601DateFormatter()
+
+        // ISO8601DateFormatter needs .withFractionalSeconds omitted but does handle +00:00 offsets.
+        let fmt = ISO8601DateFormatter()
+        fmt.formatOptions = [.withInternetDateTime]
+
+        // Prefer explicit original_price; fall back to parsing "SAVE 24%" / "34% OFF" from sale_story.
+        var regPrice = flippItem.originalPrice
+        if regPrice == nil, let story = flippItem.saleStory,
+           let pct = Self.discountPercent(from: story), pct > 0, pct < 100 {
+            regPrice = (flippItem.currentPrice / (1.0 - Double(pct) / 100.0)).rounded(toPlaces: 2)
+        }
+
         self.id           = UUID()
         self.name         = flippItem.name
         self.storeName    = store
         self.salePrice    = flippItem.currentPrice
-        self.regularPrice = flippItem.originalPrice
+        self.regularPrice = regPrice
         self.validTo      = flippItem.validTo.flatMap { fmt.date(from: $0) }
         self.category     = DealCategory.classify(from: flippItem.name)
+    }
+
+    // Parses "SAVE 24%", "34% OFF", "SAVE UP TO 20%" → percentage integer.
+    private static func discountPercent(from story: String) -> Int? {
+        let pattern = #"(\d+)\s*%"#
+        guard let range = story.range(of: pattern, options: .regularExpression),
+              let numRange = story[range].range(of: #"\d+"#, options: .regularExpression) else { return nil }
+        return Int(story[numRange])
+    }
+}
+
+private extension Double {
+    func rounded(toPlaces places: Int) -> Double {
+        let factor = pow(10.0, Double(places))
+        return (self * factor).rounded() / factor
     }
 }
