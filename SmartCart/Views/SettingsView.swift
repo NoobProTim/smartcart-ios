@@ -29,6 +29,10 @@ final class SettingsViewModel: ObservableObject {
     @Published var postalCode = ""
     @Published var postalCodeError: String? = nil   // P1-9: validation error
 
+    // Price intelligence
+    @Published var weeklySummaryEnabled = false
+    @Published var replenishmentMethod: String = "average"
+
     // Stores
     @Published var allStores: [Store] = []
     @Published var selectedStoreIDs: Set<Int64> = []
@@ -55,6 +59,8 @@ final class SettingsViewModel: ObservableObject {
         expiryReminderDays      = Int(DatabaseManager.shared.getSetting(key: "expiry_reminder_days_before") ?? "1") ?? 1
         dailyAlertCap           = Int(DatabaseManager.shared.getSetting(key: "daily_alert_cap")         ?? "3") ?? 3
         postalCode              = DatabaseManager.shared.getSetting(key: "user_postal_code")            ?? ""
+        weeklySummaryEnabled    = DatabaseManager.shared.getSetting(key: "weekly_summary_enabled")     == "1"
+        replenishmentMethod     = DatabaseManager.shared.getSetting(key: "replenishment_method")       ?? "average"
 
         // Stores
         allStores       = DatabaseManager.shared.fetchSelectedStores()
@@ -93,6 +99,17 @@ final class SettingsViewModel: ObservableObject {
         allStores = DatabaseManager.shared.fetchSelectedStores()
     }
 
+    func resetToDefaults() {
+        let db = DatabaseManager.shared
+        db.setSetting(key: "sale_alerts_enabled",        value: "1")
+        db.setSetting(key: "flyer_expiry_reminder",      value: "1")
+        db.setSetting(key: "expiry_reminder_days_before",value: "1")
+        db.setSetting(key: "daily_alert_cap",            value: "3")
+        db.setSetting(key: "weekly_summary_enabled",     value: "0")
+        db.setSetting(key: "replenishment_method",       value: "average")
+        load()
+    }
+
     // MARK: Notification toggle
     // If the user enables from Settings and OS hasn't denied: request permission.
     // If OS has denied: open iOS Settings.
@@ -129,6 +146,8 @@ struct SettingsView: View {
             locationSection
             notificationsSection
             alertPrefsSection
+            priceIntelligenceSection
+            resetSection
             aboutSection
         }
         .navigationTitle("Settings")
@@ -196,6 +215,48 @@ struct SettingsView: View {
             )) {
                 Label("Price Alerts", systemImage: vm.notificationsDeniedByOS
                       ? "bell.slash" : "bell.badge")
+            }
+            Toggle(isOn: Binding(
+                get: { vm.weeklySummaryEnabled },
+                set: {
+                    vm.weeklySummaryEnabled = $0
+                    DatabaseManager.shared.setSetting(key: "weekly_summary_enabled", value: $0 ? "1" : "0")
+                }
+            )) {
+                Label("Weekly Summary", systemImage: "calendar.badge.clock")
+            }
+        }
+    }
+
+    // MARK: Price intelligence section
+    private var priceIntelligenceSection: some View {
+        Section(header: Text("Price Intelligence"),
+                footer: Text("Controls how SmartCart estimates your restock window.")) {
+            Picker("Replenishment method", selection: Binding(
+                get: { vm.replenishmentMethod },
+                set: {
+                    vm.replenishmentMethod = $0
+                    DatabaseManager.shared.setSetting(key: "replenishment_method", value: $0)
+                }
+            )) {
+                Text("Average cycle").tag("average")
+                Text("Shortest cycle").tag("shortest")
+                Text("Longest cycle").tag("longest")
+            }
+        }
+    }
+
+    // MARK: Reset section
+    private var resetSection: some View {
+        Section {
+            Button(role: .destructive) {
+                vm.resetToDefaults()
+            } label: {
+                HStack {
+                    Spacer()
+                    Text("Reset to Defaults")
+                    Spacer()
+                }
             }
         }
     }

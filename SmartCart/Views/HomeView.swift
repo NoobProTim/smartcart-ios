@@ -44,7 +44,7 @@ struct HomeView: View {
                         .transition(.opacity)
                 }
             }
-            .navigationTitle("Smart List")
+            .navigationTitle(greetingText)
             .navigationSubtitle(refreshSubtitle ?? "")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -377,6 +377,15 @@ struct HomeView: View {
             DispatchQueue.main.async {
                 showNotificationBanner = settings.authorizationStatus == .denied
             }
+        }
+    }
+
+    private var greetingText: String {
+        let hour = Calendar.current.component(.hour, from: Date())
+        switch hour {
+        case 5..<12:  return "Good morning"
+        case 12..<17: return "Good afternoon"
+        default:      return "Good evening"
         }
     }
 }

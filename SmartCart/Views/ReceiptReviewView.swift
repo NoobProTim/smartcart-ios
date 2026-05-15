@@ -36,6 +36,10 @@ final class ReceiptReviewViewModel: ObservableObject {
     /// Returns only the items the user has checked for inclusion.
     var selectedItems: [EditableReceiptItem] { editableItems.filter { $0.isIncluded } }
 
+    var subtotal: Double {
+        selectedItems.compactMap { $0.source.parsedPrice }.reduce(0, +)
+    }
+
     /// Saves all selected items to items + user_items + purchase_history.
     /// Uses the edited name if the user changed it; otherwise uses the OCR name.
     func confirmAndSave(dismissAction: @escaping () -> Void) {
@@ -112,13 +116,22 @@ struct ReceiptReviewView: View {
             Group {
                 if vm.saveComplete {
                     // Post-save celebration state
-                    VStack(spacing: 16) {
+                    VStack(spacing: 20) {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 56)).foregroundStyle(Color.accentColor)
                         Text("\(vm.selectedItems.count) item\(vm.selectedItems.count == 1 ? "" : "s") added")
                             .font(.system(size: 20, weight: .bold))
                         Text("SmartCart is tracking them for you.")
                             .font(.system(size: 15)).foregroundStyle(.secondary)
+                        // Achievement pills
+                        HStack(spacing: 8) {
+                            AchievementPill(icon: "tag.fill", label: "\(vm.selectedItems.count) tracked", color: .accentColor)
+                            if vm.subtotal > 0 {
+                                AchievementPill(icon: "dollarsign.circle.fill",
+                                                label: String(format: "$%.2f", vm.subtotal),
+                                                color: .green)
+                            }
+                        }
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
@@ -140,12 +153,38 @@ struct ReceiptReviewView: View {
     // MARK: Review list
     private var reviewList: some View {
         VStack(spacing: 0) {
-            // Header count
-            HStack {
-                Text("\(vm.selectedItems.count) of \(vm.editableItems.count) items selected")
-                    .font(.system(size: 13)).foregroundStyle(.secondary)
+            // Totals header
+            HStack(spacing: 0) {
+                VStack(alignment: .leading, spacing: 2) {
+                    if let name = storeName {
+                        Text(name)
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    Text(Date(), format: .dateTime.month(.abbreviated).day().year())
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
-                // Select all / Deselect all toggle
+                VStack(alignment: .trailing, spacing: 2) {
+                    if vm.subtotal > 0 {
+                        Text(String(format: "$%.2f", vm.subtotal))
+                            .font(.system(size: 15, weight: .semibold))
+                            .monospacedDigit()
+                    }
+                    Text("\(vm.selectedItems.count) of \(vm.editableItems.count) items")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Color(.secondarySystemBackground))
+
+            // Select all row
+            HStack {
+                Text("Items")
+                    .font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
+                Spacer()
                 Button(vm.editableItems.allSatisfy({ $0.isIncluded }) ? "Deselect all" : "Select all") {
                     let allSelected = vm.editableItems.allSatisfy({ $0.isIncluded })
                     for i in vm.editableItems.indices { vm.editableItems[i].isIncluded = !allSelected }
@@ -153,7 +192,7 @@ struct ReceiptReviewView: View {
                 .font(.system(size: 13))
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
+            .padding(.vertical, 8)
 
             List {
                 ForEach($vm.editableItems) { $editable in
@@ -240,6 +279,27 @@ struct ReceiptItemRow: View {
         }
         .opacity(editable.isIncluded ? 1.0 : 0.45)
         .listRowSeparator(.visible)
+    }
+}
+
+// MARK: - AchievementPill
+private struct AchievementPill: View {
+    let icon: String
+    let label: String
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.system(size: 11, weight: .semibold))
+            Text(label)
+                .font(.system(size: 12, weight: .semibold))
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(color.opacity(0.10))
+        .clipShape(Capsule())
     }
 }
 

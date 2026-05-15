@@ -52,6 +52,8 @@ struct ItemDetailView: View {
     @State private var currentPrice: Double? = nil
     @State private var historicalLow: (price: Double, label: String)? = nil
 
+    @State private var addedToListTrigger = 0
+
     // P1 Smart Insights
     @State private var avgPrice: Double?     = nil
     @State private var avgQty: Double        = 1
@@ -150,6 +152,15 @@ struct ItemDetailView: View {
                             Text("at \(storeName)")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
+                            if let avg = avgPrice, avg > 0, p < avg {
+                                let pct = Int(round((avg - p) / avg * 100))
+                                Text("-\(pct)%")
+                                    .font(.caption.weight(.semibold))
+                                    .padding(.horizontal, 6).padding(.vertical, 3)
+                                    .background(Color.green.opacity(0.12))
+                                    .foregroundStyle(.green)
+                                    .clipShape(Capsule())
+                            }
                         } else {
                             Text("No current price available")
                                 .font(.subheadline)
@@ -361,7 +372,18 @@ struct ItemDetailView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .padding(.horizontal)
+
+                    Button {
+                        db.addToGroceryList(itemID: itemID, expectedPrice: currentPrice)
+                        addedToListTrigger += 1
+                    } label: {
+                        Label("Add to Shopping List", systemImage: "list.bullet.clipboard")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .padding(.horizontal)
                     .padding(.bottom, 16)
+                    .sensoryFeedback(.selection, trigger: addedToListTrigger)
                 }
             }
         }
