@@ -3,6 +3,15 @@
 import Foundation
 import SQLite
 
+struct ActiveSaleRow: Identifiable {
+    let id:           Int64
+    let itemName:     String
+    let storeName:    String
+    let salePrice:    Double
+    let regularPrice: Double?
+    let validTo:      Date?
+}
+
 struct GroceryListItem: Identifiable {
     let id:            Int64
     let itemID:        Int64
@@ -55,5 +64,27 @@ extension DatabaseManager {
 
     func removeFromGroceryList(id: Int64) {
         _ = try? db.run(groceryListTable.filter(groceryListID == id).delete())
+    }
+
+    func fetchAllActiveSales() -> [ActiveSaleRow] {
+        let today = Date()
+        let query = flyerSalesTable
+            .join(itemsTable, on: flyerItemID == itemID)
+            .filter(flyerStartDate <= today)
+        let rows = (try? db.prepare(query)) ?? AnySequence([])
+        return rows.compactMap { row in
+            let end = row[flyerEndDate]
+            if let end = end, end < today { return nil }
+            let storeRow     = try? db.pluck(storesTable.filter(storeID == row[flyerStoreID]))
+            let storeNameVal = storeRow?[storeName] ?? "Unknown"
+            return ActiveSaleRow(
+                id:           row[flyerID],
+                itemName:     row[itemNameDisplay],
+                storeName:    storeNameVal,
+                salePrice:    row[flyerSalePrice],
+                regularPrice: row[flyerRegularPrice],
+                validTo:      row[flyerEndDate]
+            )
+        }
     }
 }

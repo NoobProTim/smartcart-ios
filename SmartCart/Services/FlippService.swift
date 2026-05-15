@@ -26,20 +26,22 @@ import Foundation
 
 // MARK: - FlippItem
 struct FlippItem: Decodable {
-    let name: String
-    let currentPrice: Double
-    let validTo: String?
-    let storeCode: String?
+    let name:          String
+    let currentPrice:  Double
+    let originalPrice: Double?
+    let validTo:       String?
+    let storeCode:     String?
 
     enum CodingKeys: String, CodingKey {
         case name
-        case currentPrice = "current_price"
-        case validTo = "valid_to"
-        case storeCode = "retailer_name"
+        case currentPrice  = "current_price"
+        case originalPrice = "original_price"
+        case validTo       = "valid_to"
+        case storeCode     = "merchant_name"   // was "retailer_name" — API field is merchant_name
     }
 
     init(from decoder: Decoder) throws {
-        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let c     = try decoder.container(keyedBy: CodingKeys.self)
         name      = try c.decode(String.self, forKey: .name)
         validTo   = try? c.decode(String.self, forKey: .validTo)
         storeCode = try? c.decode(String.self, forKey: .storeCode)
@@ -49,6 +51,11 @@ struct FlippItem: Decodable {
             currentPrice = d
         } else {
             currentPrice = 0.0
+        }
+        if let d = try? c.decode(Double.self, forKey: .originalPrice), d > 0 {
+            originalPrice = d
+        } else {
+            originalPrice = nil
         }
     }
 }
@@ -65,6 +72,33 @@ final class FlippService {
 
     private let baseURL = "https://backflipp.wishabi.com/flipp/items/search"
     private let session = URLSession.shared
+
+    // MARK: - fetchPopularDeals
+    func fetchPopularDeals(postalCode: String) async -> [FlyerDeal] {
+        let terms = [
+            "milk", "chicken", "beef", "eggs", "bread",
+            "butter", "yogurt", "apple", "tomato", "rice",
+            "flour", "pork", "cheese", "orange juice", "cereal"
+        ]
+        var allDeals: [FlyerDeal] = []
+        await withTaskGroup(of: [FlyerDeal].self) { group in
+            for term in terms {
+                group.addTask {
+                    let items = await self.queryFlipp(term: term, postalCode: postalCode)
+                    return items.compactMap { FlyerDeal(flippItem: $0) }
+                }
+            }
+            for await batch in group {
+                allDeals.append(contentsOf: batch)
+            }
+        }
+        var seen = Set<String>()
+        let deduped = allDeals.filter { deal in
+            let key = "\(deal.name.lowercased())|\(deal.storeName.lowercased())"
+            return seen.insert(key).inserted
+        }
+        return deduped.sorted { ($0.discountPercent ?? 0) > ($1.discountPercent ?? 0) }
+    }
 
     // MARK: - fetchPrices(for:)
     func fetchPrices(for items: [UserItem]) async {
@@ -190,5 +224,21 @@ final class FlippService {
     func markFlippUnavailable(itemID: Int64) {
         let timestamp = ISO8601DateFormatter().string(from: Date())
         DatabaseManager.shared.setSetting(key: "flipp_no_data_\(itemID)", value: timestamp)
+    }
+}
+
+// MARK: - FlyerDeal initialiser from FlippItem
+extension FlyerDeal {
+    init?(flippItem: FlippItem) {
+        guard flippItem.currentPrice > 0.01,
+              let store = flippItem.storeCode, !store.isEmpty else { return nil }
+        let fmt       = ISO8601DateFormatter()
+        self.id           = UUID()
+        self.name         = flippItem.name
+        self.storeName    = store
+        self.salePrice    = flippItem.currentPrice
+        self.regularPrice = flippItem.originalPrice
+        self.validTo      = flippItem.validTo.flatMap { fmt.date(from: $0) }
+        self.category     = DealCategory.classify(from: flippItem.name)
     }
 }
