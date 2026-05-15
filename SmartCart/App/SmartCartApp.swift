@@ -9,19 +9,40 @@ import SwiftUI
 struct SmartCartApp: App {
 
     @StateObject private var notificationRouter = NotificationRouter()
+    @State private var onboardingStep: OnboardingStep = .unknown
+
+    private enum OnboardingStep { case unknown, carousel, setup, done }
 
     init() {
-        // Must be called before applicationDidFinishLaunching completes.
         BackgroundSyncManager.shared.registerBackgroundTask()
         BackgroundSyncManager.shared.scheduleNextRefresh()
-        // Open the database and run migrations.
         _ = DatabaseManager.shared
     }
 
     var body: some Scene {
         WindowGroup {
-            ContentView()
-                .environmentObject(notificationRouter)
+            Group {
+                switch onboardingStep {
+                case .unknown:
+                    Color(.systemBackground).ignoresSafeArea()
+                case .carousel:
+                    OnboardingCarouselView(onComplete: {
+                        onboardingStep = .setup
+                    })
+                case .setup:
+                    OnboardingSetupView(onComplete: {
+                        DatabaseManager.shared.setSetting(key: "onboarding_complete", value: "1")
+                        onboardingStep = .done
+                    })
+                case .done:
+                    ContentView()
+                        .environmentObject(notificationRouter)
+                }
+            }
+            .onAppear {
+                let done = DatabaseManager.shared.getSetting(key: "onboarding_complete") == "1"
+                onboardingStep = done ? .done : .carousel
+            }
         }
     }
 }
