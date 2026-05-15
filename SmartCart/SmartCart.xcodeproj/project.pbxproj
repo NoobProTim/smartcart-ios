@@ -54,16 +54,21 @@
 		327FAF712FB58DA200FC6EB7 /* NameNormaliser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF1E2FB58DA200FC6EB7 /* NameNormaliser.swift */; };
 		327FAF722FB58DA200FC6EB7 /* DatabaseManager+PriceHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF052FB58DA200FC6EB7 /* DatabaseManager+PriceHistory.swift */; };
 		327FAF732FB58DA200FC6EB7 /* DatabaseManager+Fixes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF042FB58DA200FC6EB7 /* DatabaseManager+Fixes.swift */; };
-		327FAF7A2FB58DA200FC6EB7 /* DatabaseManager+GroceryList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF092FB58DA200FC6EB7 /* DatabaseManager+GroceryList.swift */; };
 		327FAF742FB58DA200FC6EB7 /* EmptyCTAView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF312FB58DA200FC6EB7 /* EmptyCTAView.swift */; };
 		327FAF762FB58DA200FC6EB7 /* NotificationBannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF352FB58DA200FC6EB7 /* NotificationBannerView.swift */; };
 		327FAF772FB58DA200FC6EB7 /* OnboardingSetupView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF372FB58DA200FC6EB7 /* OnboardingSetupView.swift */; };
 		327FAF792FB58DA200FC6EB7 /* Item.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF0F2FB58DA200FC6EB7 /* Item.swift */; };
+		327FAF7A2FB58DA200FC6EB7 /* DatabaseManager+GroceryList.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF092FB58DA200FC6EB7 /* DatabaseManager+GroceryList.swift */; };
 		327FAF7C2FB590AF00FC6EB7 /* RestockStatus 2.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF7B2FB590AF00FC6EB7 /* RestockStatus 2.swift */; };
 		327FAF812FB5916F00FC6EB7 /* SQLite in Frameworks */ = {isa = PBXBuildFile; productRef = 327FAF802FB5916F00FC6EB7 /* SQLite */; };
 		327FAF882FB5944500FC6EB7 /* DatabaseExpressions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF872FB5944500FC6EB7 /* DatabaseExpressions.swift */; };
 		327FAF8A2FB5A04400FC6EB7 /* NotificationRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF892FB5A04400FC6EB7 /* NotificationRouter.swift */; };
 		327FAF8C2FB5A04400FC6EB7 /* AlertsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF8D2FB5A04400FC6EB7 /* AlertsView.swift */; };
+		327FAF912FB5A10000FC6EB7 /* FlyerDeal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF902FB5A10000FC6EB7 /* FlyerDeal.swift */; };
+		327FAF932FB5A10000FC6EB7 /* FlyersViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF922FB5A10000FC6EB7 /* FlyersViewModel.swift */; };
+		327FAF952FB5A10000FC6EB7 /* GroceryListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF942FB5A10000FC6EB7 /* GroceryListViewModel.swift */; };
+		327FAF972FB5A10000FC6EB7 /* GroceryListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF962FB5A10000FC6EB7 /* GroceryListView.swift */; };
+		327FAF992FB5A10000FC6EB7 /* FlyersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF982FB5A10000FC6EB7 /* FlyersView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -75,8 +80,8 @@
 		327FAF042FB58DA200FC6EB7 /* DatabaseManager+Fixes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DatabaseManager+Fixes.swift"; sourceTree = "<group>"; };
 		327FAF052FB58DA200FC6EB7 /* DatabaseManager+PriceHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DatabaseManager+PriceHistory.swift"; sourceTree = "<group>"; };
 		327FAF062FB58DA200FC6EB7 /* DatabaseManager+Purchases.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DatabaseManager+Purchases.swift"; sourceTree = "<group>"; };
-		327FAF092FB58DA200FC6EB7 /* DatabaseManager+GroceryList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DatabaseManager+GroceryList.swift"; sourceTree = "<group>"; };
 		327FAF072FB58DA200FC6EB7 /* Schema.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Schema.swift; sourceTree = "<group>"; };
+		327FAF092FB58DA200FC6EB7 /* DatabaseManager+GroceryList.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DatabaseManager+GroceryList.swift"; sourceTree = "<group>"; };
 		327FAF0C2FB58DA200FC6EB7 /* AlertCandidate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertCandidate.swift; sourceTree = "<group>"; };
 		327FAF0D2FB58DA200FC6EB7 /* AlertLog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertLog.swift; sourceTree = "<group>"; };
 		327FAF0E2FB58DA200FC6EB7 /* FlyerSale.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlyerSale.swift; sourceTree = "<group>"; };
@@ -106,7 +111,6 @@
 		327FAF2D2FB58DA200FC6EB7 /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
 		327FAF2E2FB58DA200FC6EB7 /* SmartListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartListViewModel.swift; sourceTree = "<group>"; };
 		327FAF302FB58DA200FC6EB7 /* AlertDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertDetailView.swift; sourceTree = "<group>"; };
-		327FAF8D2FB5A04400FC6EB7 /* AlertsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertsView.swift; sourceTree = "<group>"; };
 		327FAF312FB58DA200FC6EB7 /* EmptyCTAView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyCTAView.swift; sourceTree = "<group>"; };
 		327FAF322FB58DA200FC6EB7 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		327FAF332FB58DA200FC6EB7 /* HomeView+DeepLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HomeView+DeepLink.swift"; sourceTree = "<group>"; };
@@ -125,6 +129,12 @@
 		327FAF7B2FB590AF00FC6EB7 /* RestockStatus 2.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "RestockStatus 2.swift"; sourceTree = "<group>"; };
 		327FAF872FB5944500FC6EB7 /* DatabaseExpressions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DatabaseExpressions.swift; sourceTree = "<group>"; };
 		327FAF892FB5A04400FC6EB7 /* NotificationRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationRouter.swift; sourceTree = "<group>"; };
+		327FAF8D2FB5A04400FC6EB7 /* AlertsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertsView.swift; sourceTree = "<group>"; };
+		327FAF902FB5A10000FC6EB7 /* FlyerDeal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlyerDeal.swift; sourceTree = "<group>"; };
+		327FAF922FB5A10000FC6EB7 /* FlyersViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlyersViewModel.swift; sourceTree = "<group>"; };
+		327FAF942FB5A10000FC6EB7 /* GroceryListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroceryListViewModel.swift; sourceTree = "<group>"; };
+		327FAF962FB5A10000FC6EB7 /* GroceryListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroceryListView.swift; sourceTree = "<group>"; };
+		327FAF982FB5A10000FC6EB7 /* FlyersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlyersView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -220,6 +230,7 @@
 				327FAF162FB58DA200FC6EB7 /* UserItem.swift */,
 				327FAF172FB58DA200FC6EB7 /* UserStore.swift */,
 				327FAF7B2FB590AF00FC6EB7 /* RestockStatus 2.swift */,
+				327FAF902FB5A10000FC6EB7 /* FlyerDeal.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -256,6 +267,8 @@
 				327FAF2C2FB58DA200FC6EB7 /* PriceHistoryViewModel.swift */,
 				327FAF2D2FB58DA200FC6EB7 /* SettingsViewModel.swift */,
 				327FAF2E2FB58DA200FC6EB7 /* SmartListViewModel.swift */,
+				327FAF922FB5A10000FC6EB7 /* FlyersViewModel.swift */,
+				327FAF942FB5A10000FC6EB7 /* GroceryListViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -280,6 +293,8 @@
 				327FAF3D2FB58DA200FC6EB7 /* SettingsView.swift */,
 				327FAF3E2FB58DA200FC6EB7 /* SmartListView.swift */,
 				327FAF3F2FB58DA200FC6EB7 /* SplashView.swift */,
+				327FAF962FB5A10000FC6EB7 /* GroceryListView.swift */,
+				327FAF982FB5A10000FC6EB7 /* FlyersView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -429,6 +444,11 @@
 				327FAF762FB58DA200FC6EB7 /* NotificationBannerView.swift in Sources */,
 				327FAF772FB58DA200FC6EB7 /* OnboardingSetupView.swift in Sources */,
 				327FAF792FB58DA200FC6EB7 /* Item.swift in Sources */,
+				327FAF912FB5A10000FC6EB7 /* FlyerDeal.swift in Sources */,
+				327FAF932FB5A10000FC6EB7 /* FlyersViewModel.swift in Sources */,
+				327FAF952FB5A10000FC6EB7 /* GroceryListViewModel.swift in Sources */,
+				327FAF972FB5A10000FC6EB7 /* GroceryListView.swift in Sources */,
+				327FAF992FB5A10000FC6EB7 /* FlyersView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -561,15 +581,17 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = J3WW434LK8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "SmartCart uses the camera to scan grocery receipts.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "SmartCart accesses your photos to scan grocery receipts.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -594,15 +616,17 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = J3WW434LK8;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "SmartCart uses the camera to scan grocery receipts.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "SmartCart accesses your photos to scan grocery receipts.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
 				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
@@ -660,7 +684,6 @@
 			package = 327FAF7F2FB5916F00FC6EB7 /* XCRemoteSwiftPackageReference "SQLite" */;
 			productName = SQLite;
 		};
-
 /* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 327FAE6A2FB58B8300FC6EB7 /* Project object */;

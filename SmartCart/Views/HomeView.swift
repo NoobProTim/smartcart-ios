@@ -53,11 +53,12 @@ struct HomeView: View {
                             Image(systemName: "plus")
                         }
                         .accessibilityLabel("Add item manually")
-                        Button { showScanner = true } label: {
-                            Image(systemName: "camera.viewfinder")
-                                .font(.system(size: 18))
-                        }
-                        .accessibilityLabel("Scan a receipt")
+                        // Scanner button commented out — receipt scanner on hold
+                        // Button { showScanner = true } label: {
+                        //     Image(systemName: "camera.viewfinder")
+                        //         .font(.system(size: 18))
+                        // }
+                        // .accessibilityLabel("Scan a receipt")
                     }
                 }
             }
@@ -85,9 +86,10 @@ struct HomeView: View {
                 deepLinkDestination
             }
         }
-        .sheet(isPresented: $showScanner, onDismiss: { viewModel.load() }) {
-            MultiShotCaptureView()
-        }
+        // Scanner sheet commented out — receipt scanner on hold
+        // .sheet(isPresented: $showScanner, onDismiss: { viewModel.load() }) {
+        //     MultiShotCaptureView()
+        // }
         .sheet(isPresented: $showAddItem) {
             addItemSheet
         }
