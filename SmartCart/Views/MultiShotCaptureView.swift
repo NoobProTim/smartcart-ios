@@ -1,274 +1,359 @@
 // MultiShotCaptureView.swift — SmartCart/Views/MultiShotCaptureView.swift
 //
-// Multi-shot receipt scanner. Replaces ReceiptScanView.
-// User takes one or more photos of a receipt (useful for long receipts),
-// then taps Process. Each image is OCR'd concurrently via ReceiptScannerService;
-// results are merged by nameNormalised (highest confidence wins) and handed
-// to ReceiptReviewView as [ParsedReceiptItem].
+// Full-screen live-viewfinder receipt scanner.
+// The camera stays open between shots — tap the shutter button for each
+// section of a long receipt, then tap Process when done.
 //
-// Tap a thumbnail → selected state → Retake button appears → camera opens → replaces that slot.
-// Tap elsewhere → deselects.
+// Store is auto-detected from the OCR raw lines after processing —
+// no manual picker needed.
+//
+// Thumbnail strip: tap a thumbnail to select it, tap the × to delete it.
 
 import SwiftUI
 import AVFoundation
+import Combine
+
+// MARK: - CameraSessionManager
+
+@MainActor
+final class CameraSessionManager: ObservableObject {
+
+    let session        = AVCaptureSession()
+    private let output = AVCapturePhotoOutput()
+    private var activeDelegate: PhotoCaptureDelegate?
+
+    func configure() {
+        session.beginConfiguration()
+        session.sessionPreset = .photo
+        if let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+           let input  = try? AVCaptureDeviceInput(device: device),
+           session.canAddInput(input) {
+            session.addInput(input)
+        }
+        if session.canAddOutput(output) { session.addOutput(output) }
+        session.commitConfiguration()
+    }
+
+    func start() { Task.detached(priority: .userInitiated) { [s = session] in s.startRunning()  } }
+    func stop()  { Task.detached                           { [s = session] in s.stopRunning()   } }
+
+    func capturePhoto() async -> UIImage? {
+        await withCheckedContinuation { cont in
+            let del = PhotoCaptureDelegate { img in cont.resume(returning: img) }
+            activeDelegate = del
+            output.capturePhoto(with: AVCapturePhotoSettings(), delegate: del)
+        }
+    }
+}
+
+// MARK: - PhotoCaptureDelegate (non-isolated helper)
+
+private final class PhotoCaptureDelegate: NSObject, AVCapturePhotoCaptureDelegate {
+    private let completion: (UIImage?) -> Void
+    init(completion: @escaping (UIImage?) -> Void) { self.completion = completion }
+
+    func photoOutput(_ output: AVCapturePhotoOutput,
+                     didFinishProcessingPhoto photo: AVCapturePhoto, error: Error?) {
+        let image = photo.fileDataRepresentation().flatMap { UIImage(data: $0) }
+        completion(image)
+    }
+}
+
+// MARK: - LiveCameraPreview
+
+struct LiveCameraPreview: UIViewRepresentable {
+    let session: AVCaptureSession
+
+    func makeUIView(context: Context) -> PreviewView { PreviewView(session: session) }
+    func updateUIView(_ uiView: PreviewView, context: Context) {}
+
+    final class PreviewView: UIView {
+        override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
+        var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+
+        init(session: AVCaptureSession) {
+            super.init(frame: .zero)
+            previewLayer.session      = session
+            previewLayer.videoGravity = .resizeAspectFill
+        }
+        required init?(coder: NSCoder) { fatalError() }
+    }
+}
+
+// MARK: - MultiShotCaptureView
 
 @MainActor
 struct MultiShotCaptureView: View {
 
-    @State private var capturedImages: [UIImage] = []
-    @State private var selectedIndex: Int?        = nil
-    @State private var retakeIndex: Int?          = nil
-    @State private var isProcessing               = false
-    @State private var showCamera                 = false
-    @State private var showPermissionSheet        = false
-    @State private var errorMessage: String?      = nil
+    @StateObject private var camera = CameraSessionManager()
+
+    @State private var images: [UIImage]              = []
+    @State private var selectedIndex: Int?            = nil
+    @State private var isCapturing                    = false
+    @State private var isProcessing                   = false
     @State private var reviewItems: [ParsedReceiptItem]? = nil
-    @State private var captureHapticTrigger       = 0
-    @State private var stores: [Store]            = []
-    @State private var selectedStore: Store?      = nil
+    @State private var detectedStore: Store?          = nil
+    @State private var stores: [Store]                = []
+    @State private var errorMessage: String?          = nil
+    @State private var hapticTrigger                  = 0
+    @State private var showPermissionSheet            = false
 
     @Environment(\.dismiss) private var dismiss
 
+    private var hasCameraHardware: Bool {
+        AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) != nil
+    }
+
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                Group {
-                    if capturedImages.isEmpty {
-                        emptyPrompt
-                    } else {
-                        shotCountHeader
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-                if let err = errorMessage {
-                    Text(err)
+        ZStack {
+            // Background: live preview or simulator placeholder
+            if hasCameraHardware {
+                LiveCameraPreview(session: camera.session)
+                    .ignoresSafeArea()
+            } else {
+                Color.black.ignoresSafeArea()
+                VStack(spacing: 12) {
+                    Image(systemName: "camera.slash")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.white.opacity(0.35))
+                    Text("Camera unavailable")
                         .font(.caption)
-                        .foregroundStyle(.red)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal)
-                        .padding(.bottom, 8)
+                        .foregroundStyle(.white.opacity(0.35))
                 }
+            }
 
-                if isProcessing {
-                    ProgressView("Processing \(capturedImages.count) shot\(capturedImages.count == 1 ? "" : "s")…")
-                        .padding(.bottom, 8)
+            // Controls overlay
+            VStack(spacing: 0) {
+                topBar
+                    .padding(.top, 8)
+                Spacer()
+                if let err = errorMessage {
+                    errorBadge(err)
+                        .padding(.bottom, 16)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                 }
-
-                if !capturedImages.isEmpty {
-                    thumbnailStrip
-                }
-
-                actionBar
-            }
-            .navigationTitle("Scan Receipt")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .principal) {
-                    if !stores.isEmpty {
-                        Menu {
-                            ForEach(stores) { store in
-                                Button {
-                                    selectedStore = store
-                                } label: {
-                                    if selectedStore?.id == store.id {
-                                        Label(store.name, systemImage: "checkmark")
-                                    } else {
-                                        Text(store.name)
-                                    }
-                                }
-                            }
-                            Divider()
-                            Button("No store") { selectedStore = nil }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Text(selectedStore?.name ?? "Select Store")
-                                    .font(.headline)
-                                Image(systemName: "chevron.down")
-                                    .font(.system(size: 11, weight: .semibold))
-                            }
-                            .foregroundStyle(selectedStore == nil ? .secondary : .primary)
-                        }
-                    } else {
-                        Text("Scan Receipt")
-                            .font(.headline)
-                    }
-                }
-            }
-            .fullScreenCover(isPresented: $showCamera) {
-                CameraPickerView(
-                    onImage: { image in
-                        showCamera = false
-                        if let idx = retakeIndex {
-                            capturedImages[idx] = image
-                            retakeIndex = nil
-                        } else {
-                            capturedImages.append(image)
-                        }
-                        captureHapticTrigger += 1
-                        selectedIndex = nil
-                        errorMessage  = nil
-                    },
-                    onError: { message in
-                        showCamera   = false
-                        retakeIndex  = nil
-                        errorMessage = message
-                    }
-                )
-            }
-            .sheet(isPresented: $showPermissionSheet) {
-                cameraPermissionDeniedSheet
-            }
-            .sheet(
-                isPresented: Binding(
-                    get: { reviewItems != nil },
-                    set: { if !$0 { reviewItems = nil } }
-                )
-            ) {
-                if let items = reviewItems {
-                    ReceiptReviewView(
-                        items: items,
-                        storeID: selectedStore?.id,
-                        storeName: selectedStore?.name,
-                        isPresented: Binding(
-                            get: { reviewItems != nil },
-                            set: { if !$0 { reviewItems = nil } }
-                        )
-                    )
-                }
+                bottomControls
             }
         }
+        .ignoresSafeArea()
         .onAppear {
             stores = DatabaseManager.shared.fetchSelectedStores()
-            if selectedStore == nil { selectedStore = stores.first }
-            openCameraIfEmpty()
+            requestPermissionAndStart()
         }
-        .sensoryFeedback(.impact(weight: .light), trigger: captureHapticTrigger)
+        .onDisappear { camera.stop() }
+        .sheet(isPresented: $showPermissionSheet) {
+            permissionSheet
+        }
+        .sheet(
+            isPresented: Binding(get: { reviewItems != nil }, set: { if !$0 { reviewItems = nil } })
+        ) {
+            if let items = reviewItems {
+                ReceiptReviewView(
+                    items: items,
+                    storeID: detectedStore?.id,
+                    storeName: detectedStore?.name,
+                    isPresented: Binding(
+                        get: { reviewItems != nil },
+                        set: { if !$0 { reviewItems = nil; dismiss() } }
+                    )
+                )
+            }
+        }
+        .sensoryFeedback(.impact(weight: .light), trigger: hapticTrigger)
+        .animation(.easeInOut(duration: 0.2), value: errorMessage)
     }
 
-    // MARK: - Subviews
+    // MARK: Top bar
 
-    private var emptyPrompt: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "doc.viewfinder")
-                .font(.system(size: 64))
-                .foregroundStyle(.secondary)
-            Text("Take photos of your receipt")
-                .font(.headline)
-            Text("Long receipts? Take multiple shots — order doesn't matter.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 40)
+    private var topBar: some View {
+        HStack(spacing: 12) {
+            // Close
+            Button { dismiss() } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 38, height: 38)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+
+            Spacer()
+
+            // Auto-detected store badge
+            HStack(spacing: 5) {
+                Image(systemName: "storefront")
+                    .font(.system(size: 12, weight: .semibold))
+                Text(detectedStore?.name ?? (isProcessing ? "Detecting…" : "Store auto-detects"))
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+            }
+            .foregroundStyle(.white)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 7)
+            .background(.ultraThinMaterial, in: Capsule())
+
+            Spacer()
+
+            // Process button
+            Button { processAllShots() } label: {
+                Group {
+                    if isProcessing {
+                        ProgressView().tint(.white).scaleEffect(0.85)
+                    } else {
+                        Text("Process")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
+                    }
+                }
+                .frame(width: 80, height: 38)
+                .background(
+                    images.isEmpty
+                        ? AnyShapeStyle(.ultraThinMaterial)
+                        : AnyShapeStyle(Color.accentColor),
+                    in: RoundedRectangle(cornerRadius: 10)
+                )
+            }
+            .disabled(images.isEmpty || isProcessing)
+        }
+        .padding(.horizontal, 16)
+    }
+
+    // MARK: Bottom controls
+
+    private var bottomControls: some View {
+        VStack(spacing: 0) {
+            // Thumbnail strip
+            if !images.isEmpty {
+                thumbnailStrip
+                    .padding(.bottom, 20)
+            }
+
+            // Shutter row
+            HStack(alignment: .center) {
+                // Shot count
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("\(images.count)")
+                        .font(.system(size: 26, weight: .bold))
+                        .foregroundStyle(.white)
+                        .monospacedDigit()
+                    Text(images.count == 1 ? "shot" : "shots")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.65))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                // Shutter
+                Button { captureShot() } label: {
+                    ZStack {
+                        Circle()
+                            .strokeBorder(.white.opacity(0.45), lineWidth: 4)
+                            .frame(width: 82, height: 82)
+                        Circle()
+                            .fill(.white)
+                            .frame(width: 68, height: 68)
+                        if isCapturing {
+                            ProgressView().tint(Color.accentColor).scaleEffect(1.1)
+                        }
+                    }
+                }
+                .disabled(isCapturing || isProcessing)
+                .scaleEffect(isCapturing ? 0.92 : 1.0)
+                .animation(.easeInOut(duration: 0.08), value: isCapturing)
+
+                // Hint
+                Text("Tap for each\nsection")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+            .padding(.horizontal, 36)
+            .padding(.top, 16)
+            .padding(.bottom, 48)
+            .background(
+                LinearGradient(
+                    colors: [.clear, .black.opacity(0.72)],
+                    startPoint: .top, endPoint: .bottom
+                )
+            )
         }
     }
 
-    private var shotCountHeader: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(.green)
-                .symbolEffect(.bounce, value: capturedImages.count)
-            Text("\(capturedImages.count) shot\(capturedImages.count == 1 ? "" : "s") captured")
-                .font(.headline)
-                .monospacedDigit()
-            Text("Add more shots or tap Process.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-    }
+    // MARK: Thumbnail strip
 
     private var thumbnailStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
-                ForEach(capturedImages.indices, id: \.self) { index in
-                    thumbnailCell(index: index)
+                ForEach(images.indices, id: \.self) { idx in
+                    thumbnailCell(index: idx)
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 12)
         }
-        .frame(height: 160)
-        .background(Color(.systemGroupedBackground))
-        .overlay(alignment: .top) {
-            Divider()
-        }
+        .frame(height: 108)
     }
 
     private func thumbnailCell(index: Int) -> some View {
-        let isSelected = selectedIndex == index
-        return ZStack(alignment: .bottom) {
-            Image(uiImage: capturedImages[index])
+        let selected = selectedIndex == index
+        return ZStack(alignment: .topTrailing) {
+            Image(uiImage: images[index])
                 .resizable()
                 .scaledToFill()
-                .frame(width: 90, height: 130)
-                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .frame(width: 72, height: 96)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 3)
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(
+                            selected ? Color.accentColor : Color.white.opacity(0.25),
+                            lineWidth: selected ? 2.5 : 1
+                        )
                 )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(Color.black.opacity(selectedIndex != nil && !isSelected ? 0.3 : 0))
-                )
-
-            if isSelected {
-                Button {
-                    retakeIndex   = index
-                    selectedIndex = nil
-                    checkCameraPermissionAndPresent()
-                } label: {
-                    Text("Retake")
-                        .font(.caption.weight(.semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(.ultraThinMaterial)
-                        .clipShape(Capsule())
+                .overlay(alignment: .bottom) {
+                    Text("#\(index + 1)")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6).padding(.vertical, 2)
+                        .background(.black.opacity(0.5), in: Capsule())
+                        .padding(.bottom, 5)
                 }
-                .padding(.bottom, 6)
+
+            // Delete badge — visible only when selected
+            if selected {
+                Button {
+                    withAnimation(.spring(duration: 0.25, bounce: 0.1)) {
+                        images.remove(at: index)
+                        selectedIndex = nil
+                    }
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 24))
+                        .foregroundStyle(.white, .black.opacity(0.65))
+                        .shadow(radius: 2)
+                }
+                .offset(x: 8, y: -8)
+                .transition(.scale(scale: 0.5).combined(with: .opacity))
             }
         }
         .onTapGesture {
-            withAnimation(.easeInOut(duration: 0.15)) {
+            withAnimation(.spring(duration: 0.2, bounce: 0.15)) {
                 selectedIndex = (selectedIndex == index) ? nil : index
             }
         }
     }
 
-    private var actionBar: some View {
-        HStack(spacing: 12) {
-            Button {
-                selectedIndex = nil
-                retakeIndex   = nil
-                checkCameraPermissionAndPresent()
-            } label: {
-                Label("Add Shot", systemImage: "plus")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .disabled(isProcessing)
+    // MARK: Error badge
 
-            Button {
-                processAllShots()
-            } label: {
-                if isProcessing {
-                    ProgressView().frame(maxWidth: .infinity)
-                } else {
-                    Label("Process", systemImage: "doc.text.viewfinder")
-                        .frame(maxWidth: .infinity)
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(capturedImages.isEmpty || isProcessing)
-        }
-        .padding()
+    private func errorBadge(_ text: String) -> some View {
+        Text(text)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .background(.ultraThinMaterial, in: Capsule())
     }
 
-    @ViewBuilder
-    private var cameraPermissionDeniedSheet: some View {
+    // MARK: Permission sheet
+
+    private var permissionSheet: some View {
         VStack(spacing: 20) {
             Spacer()
             Image(systemName: "camera.fill")
@@ -293,53 +378,75 @@ struct MultiShotCaptureView: View {
         .presentationDetents([.medium])
     }
 
-    // MARK: - Camera helpers
+    // MARK: - Actions
 
-    private func openCameraIfEmpty() {
-        if capturedImages.isEmpty { checkCameraPermissionAndPresent() }
-    }
-
-    private func checkCameraPermissionAndPresent() {
+    private func requestPermissionAndStart() {
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         switch status {
         case .authorized:
-            showCamera = true
+            camera.configure()
+            camera.start()
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { granted in
-                DispatchQueue.main.async {
-                    if granted { self.showCamera = true }
+                Task { @MainActor in
+                    if granted { self.camera.configure(); self.camera.start() }
                     else       { self.showPermissionSheet = true }
                 }
             }
         case .denied, .restricted:
             showPermissionSheet = true
         @unknown default:
-            showCamera = true
+            camera.configure()
+            camera.start()
         }
     }
 
-    // MARK: - Processing
+    private func captureShot() {
+        isCapturing  = true
+        errorMessage = nil
+        selectedIndex = nil
+        Task {
+            if let img = await camera.capturePhoto() {
+                images.append(img)
+                hapticTrigger += 1
+            }
+            isCapturing = false
+        }
+    }
 
     private func processAllShots() {
+        guard !images.isEmpty else { dismiss(); return }
         isProcessing  = true
         errorMessage  = nil
         selectedIndex = nil
 
         Task {
+            typealias Chunk = (items: [ScannedLineItem], rawLines: [String])
             var allItems: [ScannedLineItem] = []
+            var allRawLines: [String]       = []
 
-            await withTaskGroup(of: [ScannedLineItem].self) { group in
-                for image in capturedImages {
+            await withTaskGroup(of: Chunk.self) { group in
+                for image in images {
                     group.addTask {
-                        (try? await ReceiptScannerService.shared.scan(image: image))?.items ?? []
+                        guard let r = try? await ReceiptScannerService.shared.scan(image: image) else {
+                            return ([], [])
+                        }
+                        return (r.items, r.rawLines)
                     }
                 }
-                for await items in group {
-                    allItems.append(contentsOf: items)
+                for await chunk in group {
+                    allItems.append(contentsOf: chunk.items)
+                    allRawLines.append(contentsOf: chunk.rawLines)
                 }
             }
 
-            // Deduplicate: same nameNormalised → keep highest confidence
+            // Auto-detect store from the first 20 OCR lines
+            if detectedStore == nil {
+                let haystack = allRawLines.prefix(20).joined(separator: " ").lowercased()
+                detectedStore = stores.first { haystack.contains($0.name.lowercased()) }
+            }
+
+            // Deduplicate: keep highest-confidence scan for each normalised name
             var seen: [String: ScannedLineItem] = [:]
             for item in allItems {
                 if let existing = seen[item.nameNormalised] {
@@ -349,64 +456,23 @@ struct MultiShotCaptureView: View {
                 }
             }
 
-            let parsed = seen.values.map { item in
-                ParsedReceiptItem(
-                    rawName:        item.nameRaw,
-                    normalisedName: item.nameNormalised,
-                    parsedPrice:    item.price,
-                    confidence:     item.confidence >= 0.8 ? .high : .medium
-                )
-            }
+            let parsed = seen.values
+                .sorted { $0.nameNormalised < $1.nameNormalised }
+                .map {
+                    ParsedReceiptItem(
+                        rawName:        $0.nameRaw,
+                        normalisedName: $0.nameNormalised,
+                        parsedPrice:    $0.price,
+                        confidence:     $0.confidence >= 0.8 ? .high : .medium
+                    )
+                }
 
             isProcessing = false
             if parsed.isEmpty {
-                errorMessage = "No items found. Try clearer photos."
+                withAnimation { errorMessage = "No items found. Try clearer photos." }
             } else {
                 reviewItems = parsed
             }
-        }
-    }
-}
-
-// MARK: - CameraPickerView
-// Moved here from the deleted ReceiptScanView.swift.
-struct CameraPickerView: UIViewControllerRepresentable {
-    let onImage: (UIImage) -> Void
-    let onError: (String) -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onImage: onImage, onError: onError)
-    }
-
-    func makeUIViewController(context: Context) -> UIViewController {
-        guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
-            DispatchQueue.main.async { self.onError("Camera not available on this device.") }
-            return UIViewController()
-        }
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        picker.delegate   = context.coordinator
-        return picker
-    }
-
-    func updateUIViewController(_ uiViewController: UIViewController, context: Context) {}
-
-    class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let onImage: (UIImage) -> Void
-        let onError: (String) -> Void
-
-        init(onImage: @escaping (UIImage) -> Void, onError: @escaping (String) -> Void) {
-            self.onImage = onImage
-            self.onError = onError
-        }
-
-        func imagePickerController(_ picker: UIImagePickerController,
-                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            if let img = info[.originalImage] as? UIImage { onImage(img) }
-        }
-
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            picker.dismiss(animated: true)
         }
     }
 }
