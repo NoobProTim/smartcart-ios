@@ -164,7 +164,7 @@ final class DatabaseManager {
 
     /// M3: grocery_list table (ifNotExists — safe on existing databases).
     private func applyM3Migrations() {
-        try? db.run(groceryListTable.create(ifNotExists: true) { t in
+        _ = try? db.run(groceryListTable.create(ifNotExists: true) { t in
             t.column(groceryListID,        primaryKey: .autoincrement)
             t.column(groceryListItemID)
             t.column(groceryListPrice)

@@ -23,7 +23,7 @@ enum DealCategory: String, CaseIterable, Hashable {
         }
     }
 
-    static func classify(from name: String) -> DealCategory {
+    nonisolated static func classify(from name: String) -> DealCategory {
         let n = name.lowercased()
         let dairyWords   = ["milk","butter","cream","yogurt","cheese","sour cream","cottage","margarine"]
         let meatWords    = ["chicken","beef","pork","turkey","salmon","fish","lamb","sausage","bacon","ham","steak","ground"]

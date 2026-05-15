@@ -164,7 +164,7 @@ final class AlertsViewModel: ObservableObject {
     }
 
     func dismiss(_ deal: AlertDeal) {
-        withAnimation { dismissedIDs.insert(deal.id) }
+        withAnimation { _ = dismissedIDs.insert(deal.id) }
     }
 }
 

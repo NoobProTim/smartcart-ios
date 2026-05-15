@@ -232,7 +232,7 @@ final class FlippService {
 
 // MARK: - FlyerDeal initialiser from FlippItem
 extension FlyerDeal {
-    init?(flippItem: FlippItem) {
+    nonisolated init?(flippItem: FlippItem) {
         guard flippItem.currentPrice > 0.01,
               let store = flippItem.storeCode, !store.isEmpty else { return nil }
 
@@ -257,7 +257,7 @@ extension FlyerDeal {
     }
 
     // Parses "SAVE 24%", "34% OFF", "SAVE UP TO 20%" → percentage integer.
-    private static func discountPercent(from story: String) -> Int? {
+    nonisolated private static func discountPercent(from story: String) -> Int? {
         let pattern = #"(\d+)\s*%"#
         guard let range = story.range(of: pattern, options: .regularExpression),
               let numRange = story[range].range(of: #"\d+"#, options: .regularExpression) else { return nil }
@@ -266,7 +266,7 @@ extension FlyerDeal {
 }
 
 private extension Double {
-    func rounded(toPlaces places: Int) -> Double {
+    nonisolated func rounded(toPlaces places: Int) -> Double {
         let factor = pow(10.0, Double(places))
         return (self * factor).rounded() / factor
     }
