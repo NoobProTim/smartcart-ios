@@ -195,8 +195,8 @@ private struct DealRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
                     StoreBadgeView(name: deal.storeName)
-                    if let label = deal.expiryLabel {
-                        Text(label)
+                    if let range = deal.flyerDateRange ?? deal.expiryLabel {
+                        Text(range)
                             .font(.system(size: 10))
                             .foregroundStyle(.secondary)
                     }

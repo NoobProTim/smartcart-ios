@@ -201,6 +201,22 @@ final class DatabaseManager {
 
     // MARK: - Store helpers
 
+    func fetchSelectedStoreNames() -> [String] {
+        let rows = (try? db.prepare(userSettingsTable)) ?? AnySequence([])
+        let selectedIDs: [Int64] = rows.compactMap { row in
+            let key = row[settingKey]
+            guard key.hasPrefix("store_selected_"),
+                  row[settingValue] == "1",
+                  let idPart = key.split(separator: "_").last,
+                  let id = Int64(idPart) else { return nil }
+            return id
+        }
+        return selectedIDs.compactMap { id in
+            let row = try? db.pluck(storesTable.filter(storeID == id))
+            return row?[storeName]
+        }
+    }
+
     @discardableResult
     func upsertStore(name: String) -> Int64 {
         if let existing = try? db.pluck(storesTable.filter(storeName == name)) {

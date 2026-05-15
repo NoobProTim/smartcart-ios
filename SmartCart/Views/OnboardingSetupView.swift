@@ -19,6 +19,7 @@
 //   or passes isValidCanadianPostalCode(). Prevents tapping Next on a
 //   half-typed code and seeing a jarring error shake.
 
+import CoreLocation
 import SwiftUI
 import UserNotifications
 
@@ -29,6 +30,7 @@ struct OnboardingSetupView: View {
     @State private var selectedStores: Set<String> = []
     @State private var postalCode = ""
     @State private var postalCodeError: String? = nil
+    @State private var resolvedCity: String? = nil
     @State private var notificationGranted: Bool? = nil
     @State private var showNotificationDenied = false
 
@@ -122,18 +124,31 @@ struct OnboardingSetupView: View {
                     //   2. Cap at 7 characters (A1A 1A1 with space)
                     //   3. Clear the error once the user edits the field
                     .onChange(of: postalCode) { _, newValue in
-                        // Step 1: auto-uppercase
-                        let upped = newValue.uppercased()
-                        // Step 2: cap at 7 characters ("A1A 1A1" = 7 chars with space)
+                        let upped  = newValue.uppercased()
                         let capped = upped.count > 7 ? String(upped.prefix(7)) : upped
                         if capped != postalCode { postalCode = capped }
-                        // Step 3: clear error on any change so the red text disappears
                         postalCodeError = nil
+                        let stripped = capped.replacingOccurrences(of: " ", with: "")
+                        if isValidCanadianPostalCode(stripped) {
+                            resolveCity(for: stripped)
+                        } else {
+                            withAnimation { resolvedCity = nil }
+                        }
                     }
                     .padding(.horizontal, 20)
                     .accessibilityLabel("Postal code input")
 
-                if let error = postalCodeError {
+                if let city = resolvedCity {
+                    HStack(spacing: 5) {
+                        Image(systemName: "location.fill")
+                            .font(.system(size: 11))
+                        Text(city)
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 20)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                } else if let error = postalCodeError {
                     Text(error)
                         .font(.system(size: 13))
                         .foregroundStyle(.red)
@@ -243,6 +258,17 @@ struct OnboardingSetupView: View {
                 } else {
                     withAnimation { showNotificationDenied = true }
                 }
+            }
+        }
+    }
+
+    private func resolveCity(for code: String) {
+        CLGeocoder().geocodeAddressString("\(code), Canada") { placemarks, _ in
+            DispatchQueue.main.async {
+                guard let place = placemarks?.first,
+                      let city     = place.locality,
+                      let province = place.administrativeArea else { return }
+                withAnimation { resolvedCity = "\(city), \(province)" }
             }
         }
     }

@@ -29,25 +29,31 @@ struct FlippItem: Decodable {
     let name:          String
     let currentPrice:  Double
     let originalPrice: Double?
+    let validFrom:     String?
     let validTo:       String?
     let storeCode:     String?
     let saleStory:     String?
+    let flyerId:       Int?
 
     enum CodingKeys: String, CodingKey {
         case name
         case currentPrice  = "current_price"
         case originalPrice = "original_price"
+        case validFrom     = "valid_from"
         case validTo       = "valid_to"
         case storeCode     = "merchant_name"
         case saleStory     = "sale_story"
+        case flyerId       = "flyer_id"
     }
 
     init(from decoder: Decoder) throws {
         let c     = try decoder.container(keyedBy: CodingKeys.self)
         name      = try c.decode(String.self, forKey: .name)
+        validFrom = try? c.decode(String.self, forKey: .validFrom)
         validTo   = try? c.decode(String.self, forKey: .validTo)
         storeCode = try? c.decode(String.self, forKey: .storeCode)
         saleStory = try? c.decode(String.self, forKey: .saleStory)
+        flyerId   = try? c.decode(Int.self, forKey: .flyerId)
         if let d = try? c.decode(Double.self, forKey: .currentPrice) {
             currentPrice = d
         } else if let s = try? c.decode(String.self, forKey: .currentPrice), let d = Double(s) {
@@ -100,7 +106,19 @@ final class FlippService {
             let key = "\(deal.name.lowercased())|\(deal.storeName.lowercased())"
             return seen.insert(key).inserted
         }
-        return deduped.sorted { ($0.discountPercent ?? 0) > ($1.discountPercent ?? 0) }
+
+        let selectedStores = DatabaseManager.shared.fetchSelectedStoreNames()
+            .map { $0.lowercased() }
+        let filtered: [FlyerDeal]
+        if selectedStores.isEmpty {
+            filtered = deduped
+        } else {
+            filtered = deduped.filter { deal in
+                let dl = deal.storeName.lowercased()
+                return selectedStores.contains(where: { dl.contains($0) || $0.contains(dl) })
+            }
+        }
+        return filtered.sorted { ($0.discountPercent ?? 0) > ($1.discountPercent ?? 0) }
     }
 
     // MARK: - fetchPrices(for:)
@@ -252,7 +270,9 @@ extension FlyerDeal {
         self.storeName    = store
         self.salePrice    = flippItem.currentPrice
         self.regularPrice = regPrice
+        self.validFrom    = flippItem.validFrom.flatMap { fmt.date(from: $0) }
         self.validTo      = flippItem.validTo.flatMap { fmt.date(from: $0) }
+        self.flyerId      = flippItem.flyerId
         self.category     = DealCategory.classify(from: flippItem.name)
     }
 

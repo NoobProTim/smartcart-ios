@@ -48,7 +48,9 @@ struct FlyerDeal: Identifiable, Hashable {
     let storeName:    String
     let salePrice:    Double
     let regularPrice: Double?
+    let validFrom:    Date?
     let validTo:      Date?
+    let flyerId:      Int?
     let category:     DealCategory
 
     var emoji: String { category.emoji }
@@ -75,5 +77,15 @@ struct FlyerDeal: Identifiable, Hashable {
         let fmt = DateFormatter()
         fmt.dateFormat = "MMM d"
         return "ends \(fmt.string(from: end))"
+    }
+
+    // "flyer · May 15–21" — shown when both dates are available.
+    var flyerDateRange: String? {
+        guard let from = validFrom, let to = validTo else { return nil }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "MMM d"
+        let fromStr = fmt.string(from: from)
+        fmt.dateFormat = "d"
+        return "flyer · \(fromStr)–\(fmt.string(from: to))"
     }
 }
