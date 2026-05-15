@@ -52,6 +52,12 @@ struct ItemDetailView: View {
     @State private var currentPrice: Double? = nil
     @State private var historicalLow: (price: Double, label: String)? = nil
 
+    // P1 Smart Insights
+    @State private var avgPrice: Double?     = nil
+    @State private var avgQty: Double        = 1
+    @State private var saleFreq: Double      = 0
+    @State private var recentPurchases: [PurchaseRecord] = []
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -193,7 +199,113 @@ struct ItemDetailView: View {
                     .padding(.bottom, 8)
                 }
 
+                // MARK: Smart Insights grid
+                if let currentItem = item {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Smart Insights")
+                            .font(.system(size: 11, weight: .semibold).smallCaps())
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal)
+
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
+                            InsightCell(label: "Avg Cycle",
+                                        value: currentItem.effectiveCycleDays.map { "\($0) days" } ?? "—")
+                            InsightCell(label: "You Usually Pay",
+                                        value: avgPrice.map { String(format: "$%.2f", $0) } ?? "—")
+                            InsightCell(label: "Sale Frequency",
+                                        value: saleFreq < 0.1 ? "Rare" : String(format: "~%.1f×/mo", saleFreq))
+                            InsightCell(label: "Stock Up Qty",
+                                        value: String(format: "%.0f unit%@", avgQty, avgQty == 1 ? "" : "s"))
+                        }
+                        .padding(.horizontal)
+                    }
+                    .padding(.vertical, 12)
+
+                    // MARK: Replenishment progress bar
+                    if let last = currentItem.lastPurchasedDate,
+                       let next = currentItem.nextRestockDate,
+                       let cycle = currentItem.effectiveCycleDays, cycle > 0 {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Replenishment")
+                                .font(.system(size: 11, weight: .semibold).smallCaps())
+                                .foregroundStyle(.secondary)
+
+                            let progress = min(1.0, max(0.0, Date().timeIntervalSince(last) / (next.timeIntervalSince(last))))
+                            let daysLeft = Calendar.current.dateComponents([.day], from: Date(), to: next).day ?? 0
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                GeometryReader { geo in
+                                    ZStack(alignment: .leading) {
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .fill(Color(.systemFill))
+                                            .frame(height: 8)
+                                        RoundedRectangle(cornerRadius: 4)
+                                            .fill(progress > 0.85 ? Color.orange : Color.accentColor)
+                                            .frame(width: geo.size.width * progress, height: 8)
+                                    }
+                                }
+                                .frame(height: 8)
+
+                                HStack {
+                                    Text("Bought \(last, style: .relative) ago")
+                                        .font(.system(size: 12))
+                                        .foregroundStyle(.secondary)
+                                    Spacer()
+                                    Text(daysLeft <= 0 ? "Due now" : "Due in \(daysLeft)d")
+                                        .font(.system(size: 12, weight: .medium))
+                                        .foregroundStyle(daysLeft <= 0 ? .orange : .secondary)
+                                }
+                            }
+                        }
+                        .padding(.horizontal)
+                        .padding(.bottom, 12)
+                    }
+                }
+
                 Divider()
+
+                // MARK: Purchase History
+                if !recentPurchases.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Purchase History")
+                            .font(.system(size: 11, weight: .semibold).smallCaps())
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal)
+
+                        ForEach(recentPurchases) { record in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(record.purchasedAt, style: .date)
+                                        .font(.system(size: 14))
+                                    if let sid = record.storeID,
+                                       let name = db.fetchStoreName(for: sid) {
+                                        Text(name)
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+                                Spacer()
+                                if let price = record.price {
+                                    Text(price, format: .currency(code: "CAD"))
+                                        .font(.system(size: 14, weight: .medium))
+                                        .monospacedDigit()
+                                        .foregroundStyle(
+                                            avgPrice.map { price < $0 * 0.95 } == true ? .green : .primary
+                                        )
+                                }
+                            }
+                            .padding(.horizontal)
+                            .padding(.vertical, 4)
+
+                            if record.id != recentPurchases.last?.id {
+                                Divider().padding(.leading)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 12)
+
+                    Divider()
+                }
 
                 // MARK: Alert status row
                 Button {
@@ -290,6 +402,10 @@ struct ItemDetailView: View {
         let noDataValue = db.getSetting(key: noDataKey)
         flippNoData     = (noDataValue != nil)
         historicalLow   = db.historicalLow(for: itemID)
+        avgPrice        = db.averagePurchasePrice(for: itemID)
+        avgQty          = db.averagePurchaseQty(for: itemID)
+        saleFreq        = db.saleFrequencyPerMonth(for: itemID)
+        recentPurchases = db.fetchRecentPurchases(for: itemID, limit: 8)
     }
 
     // MARK: - retryFlipp()
@@ -343,6 +459,27 @@ struct ItemDetailView: View {
         guard let i = item else { return "No active alert" }
         if i.hasActiveAlert { return "Active alert — tap to change type" }
         return "No active alert — tap to configure"
+    }
+}
+
+// MARK: - InsightCell
+private struct InsightCell: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.system(size: 11, weight: .semibold).smallCaps())
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 17, weight: .semibold))
+                .monospacedDigit()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Color(.secondarySystemGroupedBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 

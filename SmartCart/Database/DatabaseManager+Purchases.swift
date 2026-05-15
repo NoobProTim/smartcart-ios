@@ -67,4 +67,54 @@ extension DatabaseManager {
         )) ?? AnySequence([])
         return rows.compactMap { $0[purchasedAt] as Date? }
     }
+
+    func averagePurchasePrice(for itemID: Int64) -> Double? {
+        let prices = (try? db.prepare(
+            purchaseHistoryTable
+                .filter(purchaseItemID == itemID && purchasePrice != nil)
+                .select(purchasePrice)
+        ))?.compactMap { $0[purchasePrice] } ?? []
+        guard !prices.isEmpty else { return nil }
+        return prices.reduce(0, +) / Double(prices.count)
+    }
+
+    func averagePurchaseQty(for itemID: Int64) -> Double {
+        let qtys = (try? db.prepare(
+            purchaseHistoryTable
+                .filter(purchaseItemID == itemID)
+                .select(purchaseQty)
+        ))?.map { Double($0[purchaseQty]) } ?? []
+        guard !qtys.isEmpty else { return 1 }
+        return qtys.reduce(0, +) / Double(qtys.count)
+    }
+
+    func saleFrequencyPerMonth(for itemID: Int64) -> Double {
+        let ninetyDaysAgo = Calendar.current.date(byAdding: .day, value: -90, to: Date())!
+        let count = (try? db.scalar(
+            flyerSalesTable
+                .filter(flyerItemID == itemID && flyerStartDate >= ninetyDaysAgo)
+                .count
+        )) ?? 0
+        return Double(count) / 3.0
+    }
+
+    func fetchRecentPurchases(for itemID: Int64, limit: Int = 10) -> [PurchaseRecord] {
+        let rows = (try? db.prepare(
+            purchaseHistoryTable
+                .filter(purchaseItemID == itemID)
+                .order(purchasedAt.desc)
+                .limit(limit)
+        )) ?? AnySequence([])
+        return rows.compactMap { row in
+            let src = PurchaseSource(rawValue: row[purchaseSource]) ?? .manual
+            return PurchaseRecord(
+                id:          row[purchaseID],
+                itemID:      row[purchaseItemID],
+                storeID:     row[purchaseStoreID],
+                price:       row[purchasePrice],
+                purchasedAt: row[purchasedAt],
+                source:      src
+            )
+        }
+    }
 }

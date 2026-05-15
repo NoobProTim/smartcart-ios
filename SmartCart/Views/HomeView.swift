@@ -33,6 +33,7 @@ struct HomeView: View {
     @State private var refreshSubtitle: String? = nil
     @State private var isRefreshing = false
     @State private var groceryAddedTrigger = 0
+    @State private var activeSegment: Int = 0  // 0 = My List, 1 = On Sale Now
 
     var body: some View {
         NavigationStack {
@@ -108,6 +109,45 @@ struct HomeView: View {
     // MARK: - listContent
     @ViewBuilder
     private var listContent: some View {
+        VStack(spacing: 0) {
+            // Alert banner
+            if !viewModel.todaysDeals.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "tag.fill")
+                        .font(.system(size: 12))
+                    Text("\(viewModel.todaysDeals.count) deal\(viewModel.todaysDeals.count == 1 ? "" : "s") active right now")
+                        .font(.system(size: 13, weight: .medium))
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+                .foregroundStyle(Color.accentColor)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(Color.accentColor.opacity(0.08))
+            }
+
+            // Segment picker
+            Picker("", selection: $activeSegment) {
+                Text("My List").tag(0)
+                Text("On Sale Now").tag(1)
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .background(Color(.systemGroupedBackground))
+
+            if activeSegment == 0 {
+                myListContent
+            } else {
+                onSaleContent
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var myListContent: some View {
         List {
             // Savings card
             if viewModel.annualSavings > 0 {
@@ -231,6 +271,52 @@ struct HomeView: View {
         .animation(.easeInOut(duration: 0.25), value: viewModel.items.count)
         .animation(.spring(duration: 0.35, bounce: 0.15), value: viewModel.groceryList.count)
         .animation(.spring(duration: 0.35, bounce: 0.15), value: viewModel.annualSavings > 0)
+    }
+
+    @ViewBuilder
+    private var onSaleContent: some View {
+        if viewModel.todaysDeals.isEmpty {
+            VStack(spacing: 12) {
+                Image(systemName: "tag")
+                    .font(.system(size: 40))
+                    .foregroundStyle(.secondary)
+                Text("No active deals right now")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .padding(.top, 60)
+        } else {
+            List {
+                Section {
+                    ForEach(viewModel.todaysDeals) { item in
+                        if let sale = DatabaseManager.shared.fetchActiveSales(for: item.itemID).first {
+                            Button {
+                                DatabaseManager.shared.addToGroceryList(
+                                    itemID: item.itemID,
+                                    expectedPrice: sale.salePrice
+                                )
+                                groceryAddedTrigger += 1
+                                viewModel.load()
+                            } label: {
+                                DealRowView(
+                                    deal: sale,
+                                    itemName: item.nameDisplay,
+                                    historicalLow: DatabaseManager.shared.historicalLow(for: item.itemID)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                } header: {
+                    Text("On Sale Now")
+                        .font(.system(size: 11, weight: .semibold).smallCaps())
+                        .foregroundStyle(.secondary)
+                        .textCase(nil)
+                }
+            }
+            .listStyle(.insetGrouped)
+        }
     }
 
     // MARK: - deepLinkDestination
