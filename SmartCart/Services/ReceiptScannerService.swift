@@ -79,19 +79,31 @@ final class ReceiptScannerService {
                     return
                 }
                 let observations = request.results as? [VNRecognizedTextObservation] ?? []
-                let sorted = observations.sorted {
-                    $0.boundingBox.origin.y > $1.boundingBox.origin.y
-                }
-                let lines: [RecognisedLine] = sorted.compactMap { obs in
+
+                // Filter by confidence first, keeping the bounding box alongside each string.
+                let qualified: [(text: String, confidence: Float, box: CGRect)] = observations.compactMap { obs in
                     guard let top = obs.topCandidates(1).first,
                           top.confidence >= self.confidenceThreshold else { return nil }
-                    return RecognisedLine(
-                        text: top.string,
-                        confidence: top.confidence,
-                        boundingBox: obs.boundingBox
-                    )
+                    return (top.string, top.confidence, obs.boundingBox)
                 }
-                continuation.resume(returning: lines)
+
+                // Group observations that share the same visual row. Grocery receipts
+                // use a two-column layout (item name left, price right) — Vision returns
+                // these as separate text observations at the same Y coordinate. Without
+                // merging them, the price regex never sees both parts in one string.
+                let rows = self.groupIntoRows(qualified)
+
+                // Merge each row into one combined line sorted left-to-right.
+                let lines: [RecognisedLine] = rows.map { rowObs in
+                    let sorted2 = rowObs.sorted { $0.box.origin.x < $1.box.origin.x }
+                    let merged  = sorted2.map { $0.text }.joined(separator: "  ")
+                    let avgConf = rowObs.map { $0.confidence }.reduce(0, +) / Float(rowObs.count)
+                    let unionBox = self.unionRect(rowObs.map { $0.box })
+                    return RecognisedLine(text: merged, confidence: avgConf, boundingBox: unionBox)
+                }
+                // Restore top-to-bottom order after grouping.
+                let sorted = lines.sorted { $0.boundingBox.origin.y > $1.boundingBox.origin.y }
+                continuation.resume(returning: sorted)
             }
             request.recognitionLevel       = .accurate
             request.recognitionLanguages   = ["en-CA", "en-US"]
@@ -105,6 +117,40 @@ final class ReceiptScannerService {
                 continuation.resume(throwing: error)
             }
         }
+    }
+
+    private func unionRect(_ rects: [CGRect]) -> CGRect {
+        guard let first = rects.first else { return .zero }
+        var minX = first.minX, minY = first.minY
+        var maxX = first.maxX, maxY = first.maxY
+        for r in rects.dropFirst() {
+            minX = min(minX, r.minX); minY = min(minY, r.minY)
+            maxX = max(maxX, r.maxX); maxY = max(maxY, r.maxY)
+        }
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
+    // Groups Vision observations that belong to the same visual row.
+    // Two observations are on the same row if the midY of each falls within
+    // the full Y range (top–bottom) of the other — a mutual overlap test.
+    private func groupIntoRows(
+        _ obs: [(text: String, confidence: Float, box: CGRect)]
+    ) -> [[(text: String, confidence: Float, box: CGRect)]] {
+        var rows: [[(text: String, confidence: Float, box: CGRect)]] = []
+
+        for o in obs.sorted(by: { $0.box.origin.y > $1.box.origin.y }) {
+            let midY = o.box.origin.y + o.box.size.height / 2
+            if let idx = rows.indices.first(where: { rowIdx in
+                let rowMinY = rows[rowIdx].map { $0.box.origin.y }.min() ?? 0
+                let rowMaxY = rows[rowIdx].map { $0.box.origin.y + $0.box.size.height }.max() ?? 0
+                return midY >= rowMinY && midY <= rowMaxY
+            }) {
+                rows[idx].append(o)
+            } else {
+                rows.append([o])
+            }
+        }
+        return rows
     }
 
     // MARK: - Receipt structure parsing
@@ -144,8 +190,21 @@ final class ReceiptScannerService {
         "subtotal", "sub total", "total", "tax", "hst", "gst",
         "pst", "cash", "change", "debit", "credit", "visa",
         "mastercard", "balance", "savings", "you saved", "points",
-        "receipt", "thank you", "cashier", "store #", "tel:", "www."
+        "receipt", "thank you", "cashier", "store #", "tel:", "www.",
+        // FreshCo / Canadian grocery chains
+        "price matched", "instant saving", "redemption", "scene",
+        "member card", "member number", "approved", "refund policy",
+        "number of items", "switch to", "no returns", "share your",
+        "chance to win", "no purchase", "contest", "pharmacy",
+        "coaching", "tender", "auth #", "ref#", "terminal id",
+        "merchant", "card vi", "card no", "rcpt", "resp",
+        "dis spend", "@ $", "/ kg", "/ lb", "per kg", "per lb",
     ]
+
+    // Multi-buy price lines like "2 @ $1.98" or "7 @ 1/ $0.69" — not product names.
+    private let multiBuyPattern = try! NSRegularExpression(
+        pattern: #"^\d+\s*@"#, options: .caseInsensitive
+    )
 
     private func extractLineItem(from line: RecognisedLine) -> ScannedLineItem? {
         let text  = line.text
@@ -153,6 +212,9 @@ final class ReceiptScannerService {
         for keyword in skipKeywords {
             if lower.contains(keyword) { return nil }
         }
+        // Reject quantity-pricing lines ("2 @ $1.98", "0.515 kg @ $4.39")
+        let r = NSRange(text.startIndex..., in: text)
+        if multiBuyPattern.firstMatch(in: text, range: r) != nil { return nil }
         let range = NSRange(text.startIndex..., in: text)
         guard let match = pricePattern.firstMatch(in: text, range: range),
               match.numberOfRanges >= 3 else { return nil }
