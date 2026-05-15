@@ -63,6 +63,7 @@
 		327FAF812FB5916F00FC6EB7 /* SQLite in Frameworks */ = {isa = PBXBuildFile; productRef = 327FAF802FB5916F00FC6EB7 /* SQLite */; };
 		327FAF882FB5944500FC6EB7 /* DatabaseExpressions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF872FB5944500FC6EB7 /* DatabaseExpressions.swift */; };
 		327FAF8A2FB5A04400FC6EB7 /* NotificationRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF892FB5A04400FC6EB7 /* NotificationRouter.swift */; };
+		327FAF8C2FB5A04400FC6EB7 /* AlertsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF8D2FB5A04400FC6EB7 /* AlertsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -105,6 +106,7 @@
 		327FAF2D2FB58DA200FC6EB7 /* SettingsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsViewModel.swift; sourceTree = "<group>"; };
 		327FAF2E2FB58DA200FC6EB7 /* SmartListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SmartListViewModel.swift; sourceTree = "<group>"; };
 		327FAF302FB58DA200FC6EB7 /* AlertDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertDetailView.swift; sourceTree = "<group>"; };
+		327FAF8D2FB5A04400FC6EB7 /* AlertsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AlertsView.swift; sourceTree = "<group>"; };
 		327FAF312FB58DA200FC6EB7 /* EmptyCTAView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyCTAView.swift; sourceTree = "<group>"; };
 		327FAF322FB58DA200FC6EB7 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
 		327FAF332FB58DA200FC6EB7 /* HomeView+DeepLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "HomeView+DeepLink.swift"; sourceTree = "<group>"; };
@@ -262,6 +264,7 @@
 			isa = PBXGroup;
 			children = (
 				327FAF302FB58DA200FC6EB7 /* AlertDetailView.swift */,
+				327FAF8D2FB5A04400FC6EB7 /* AlertsView.swift */,
 				327FAF312FB58DA200FC6EB7 /* EmptyCTAView.swift */,
 				327FAF322FB58DA200FC6EB7 /* HomeView.swift */,
 				327FAF332FB58DA200FC6EB7 /* HomeView+DeepLink.swift */,
@@ -415,6 +418,7 @@
 				327FAF6C2FB58DA200FC6EB7 /* SmartListView.swift in Sources */,
 				327FAF6D2FB58DA200FC6EB7 /* ReceiptImportService.swift in Sources */,
 				327FAF6E2FB58DA200FC6EB7 /* AlertDetailView.swift in Sources */,
+				327FAF8C2FB5A04400FC6EB7 /* AlertsView.swift in Sources */,
 				327FAF6F2FB58DA200FC6EB7 /* SettingsView.swift in Sources */,
 				327FAF702FB58DA200FC6EB7 /* MultiShotCaptureView.swift in Sources */,
 				327FAF712FB58DA200FC6EB7 /* NameNormaliser.swift in Sources */,
