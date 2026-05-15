@@ -13,7 +13,7 @@ final class GroceryListViewModel: ObservableObject {
 
     func markPurchased(_ item: GroceryListItem) {
         DatabaseManager.shared.markGroceryListItemPurchased(itemID: item.itemID)
-        items.removeAll { $0.id == item.id }
+        load()
     }
 
     func delete(at offsets: IndexSet) {

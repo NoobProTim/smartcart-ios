@@ -3,7 +3,7 @@
 import SwiftUI
 
 struct GroceryListView: View {
-    @StateObject private var vm = GroceryListViewModel()
+    @EnvironmentObject private var vm: GroceryListViewModel
 
     var body: some View {
         Group {

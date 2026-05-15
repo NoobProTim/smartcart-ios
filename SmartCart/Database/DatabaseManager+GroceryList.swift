@@ -24,16 +24,23 @@ struct GroceryListItem: Identifiable {
 extension DatabaseManager {
 
     func addToGroceryList(itemID: Int64, expectedPrice: Double?) {
+        guard itemID > 0 else { return }
         let existing = groceryListTable.filter(
             groceryListItemID == itemID && groceryListPurchased == 0
         )
-        guard (try? db.scalar(existing.count)) == 0 else { return }
-        _ = try? db.run(groceryListTable.insert(
-            groceryListItemID    <- itemID,
-            groceryListPrice     <- expectedPrice,
-            groceryListAddedAt   <- Date(),
-            groceryListPurchased <- 0
-        ))
+        // Use ?? 0 so a nil result (table missing) doesn't block the insert.
+        let existing_count = (try? db.scalar(existing.count)) ?? 0
+        guard existing_count == 0 else { return }
+        do {
+            try db.run(groceryListTable.insert(
+                groceryListItemID    <- itemID,
+                groceryListPrice     <- expectedPrice,
+                groceryListAddedAt   <- Date(),
+                groceryListPurchased <- 0
+            ))
+        } catch {
+            print("[DB] addToGroceryList failed for itemID=\(itemID): \(error)")
+        }
     }
 
     func fetchGroceryList() -> [GroceryListItem] {

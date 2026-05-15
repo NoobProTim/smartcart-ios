@@ -4,22 +4,16 @@ import SwiftUI
 
 struct FlyersView: View {
     @StateObject private var vm = FlyersViewModel()
-    @State private var showCart = false
+    @EnvironmentObject private var cartVM: GroceryListViewModel
 
     var body: some View {
         NavigationStack {
-            ZStack(alignment: .bottomTrailing) {
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        bestPriceCarousel
-                        categoryChips
-                        dealList
-                    }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    bestPriceCarousel
+                    categoryChips
+                    dealList
                 }
-
-                CartFAB(count: vm.cartCount) { showCart = true }
-                    .padding(.trailing, 16)
-                    .padding(.bottom, 16)
             }
             .navigationTitle("Flyers")
             .navigationSubtitle("This week's best deals near you")
@@ -33,13 +27,6 @@ struct FlyersView: View {
             }
         }
         .task { await vm.load() }
-        .sheet(isPresented: $showCart, onDismiss: { vm.refreshCartCount() }) {
-            NavigationStack {
-                CartSheetView()
-            }
-            .presentationDetents([.medium, .large])
-            .presentationDragIndicator(.visible)
-        }
     }
 
     // MARK: Best price carousel
@@ -110,12 +97,13 @@ struct FlyersView: View {
                         isAdded: vm.addedIDs.contains(deal.id)
                     ) {
                         vm.addToCart(deal)
+                        cartVM.load()
                     }
                 }
             }
         }
         .padding(.horizontal, 16)
-        .padding(.bottom, 80)
+        .padding(.bottom, 24)
     }
 }
 
@@ -289,92 +277,5 @@ struct StoreBadgeView: View {
             .background(color)
             .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
             .lineLimit(1)
-    }
-}
-
-// MARK: - CartFAB
-struct CartFAB: View {
-    let count:  Int
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            ZStack(alignment: .topTrailing) {
-                Image(systemName: "cart.fill")
-                    .font(.system(size: 22))
-                    .foregroundStyle(.white)
-                    .frame(width: 52, height: 52)
-                    .background(Color(white: 0.11))
-                    .clipShape(Circle())
-                    .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
-
-                if count > 0 {
-                    Text("\(min(count, 99))")
-                        .font(.system(size: 10, weight: .black))
-                        .foregroundStyle(.white)
-                        .frame(width: 18, height: 18)
-                        .background(Color.red)
-                        .clipShape(Circle())
-                        .overlay(Circle().strokeBorder(Color(.systemBackground), lineWidth: 2))
-                        .offset(x: 4, y: -4)
-                        .transition(.scale.combined(with: .opacity))
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .animation(.spring(duration: 0.2, bounce: 0.3), value: count)
-    }
-}
-
-// MARK: - CartSheetView
-struct CartSheetView: View {
-    @State private var items: [GroceryListItem] = []
-
-    var body: some View {
-        Group {
-            if items.isEmpty {
-                VStack(spacing: 14) {
-                    Image(systemName: "cart")
-                        .font(.system(size: 40))
-                        .foregroundStyle(.secondary)
-                    Text("Your list is empty")
-                        .font(.headline)
-                    Text("Tap + on any deal to add it.")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                List {
-                    ForEach(items) { item in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(item.nameDisplay)
-                                    .font(.system(size: 14, weight: .semibold))
-                                if let price = item.expectedPrice {
-                                    Text(price, format: .currency(code: "CAD"))
-                                        .font(.system(size: 12))
-                                        .foregroundStyle(.secondary)
-                                        .monospacedDigit()
-                                }
-                            }
-                            Spacer()
-                        }
-                        .padding(.vertical, 2)
-                    }
-                }
-                .listStyle(.insetGrouped)
-            }
-        }
-        .navigationTitle("My List")
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                NavigationLink("View full list") {
-                    GroceryListView()
-                }
-                .font(.system(size: 14, weight: .semibold))
-            }
-        }
-        .onAppear { items = DatabaseManager.shared.fetchGroceryList() }
     }
 }

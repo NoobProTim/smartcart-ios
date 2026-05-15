@@ -10,7 +10,6 @@ final class FlyersViewModel: ObservableObject {
     @Published var searchText:         String         = ""
     @Published var selectedCategory:   DealCategory   = .all
     @Published var addedIDs:           Set<UUID>      = []
-    @Published var cartCount:          Int            = 0
 
     var filteredDeals: [FlyerDeal] {
         var result = deals
@@ -40,7 +39,6 @@ final class FlyersViewModel: ObservableObject {
         isLoading = true
         let postalCode = DatabaseManager.shared.getSetting(key: "user_postal_code") ?? "M5V3A8"
         deals = await FlippService.shared.fetchPopularDeals(postalCode: postalCode)
-        cartCount = DatabaseManager.shared.fetchGroceryList().count
         isLoading = false
     }
 
@@ -50,10 +48,5 @@ final class FlyersViewModel: ObservableObject {
         let iid  = db.upsertItem(nameNormalised: norm, nameDisplay: deal.name)
         db.addToGroceryList(itemID: iid, expectedPrice: deal.salePrice)
         addedIDs.insert(deal.id)
-        cartCount = db.fetchGroceryList().count
-    }
-
-    func refreshCartCount() {
-        cartCount = DatabaseManager.shared.fetchGroceryList().count
     }
 }
