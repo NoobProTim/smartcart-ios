@@ -1,0 +1,1092 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SmartCart — Interactive Wireframes</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #111; font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif; display: flex; height: 100vh; overflow: hidden; color: #fff; }
+
+  /* Sidebar */
+  .sidebar { width: 220px; background: #1a1a1a; border-right: 1px solid #2a2a2a; overflow-y: auto; flex-shrink: 0; }
+  .sidebar-title { padding: 20px 16px 12px; font-size: 11px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.8px; }
+  .sidebar-group { margin-bottom: 8px; }
+  .sidebar-group-label { padding: 6px 16px 4px; font-size: 10px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 0.6px; }
+  .sidebar-item { padding: 8px 16px; font-size: 13px; color: #aaa; cursor: pointer; transition: all 0.15s; border-left: 2px solid transparent; }
+  .sidebar-item:hover { color: #fff; background: #222; }
+  .sidebar-item.active { color: #30D158; border-left-color: #30D158; background: #1e2a1e; }
+
+  /* Main canvas */
+  .canvas { flex: 1; display: flex; align-items: center; justify-content: center; background: #0d0d0d; }
+
+  /* Phone frame */
+  .phone { width: 390px; height: 844px; background: #000; border-radius: 47px; border: 2px solid #333; position: relative; overflow: hidden; box-shadow: 0 30px 80px rgba(0,0,0,0.8), inset 0 0 0 1px #444; flex-shrink: 0; }
+  .phone-notch { position: absolute; top: 0; left: 50%; transform: translateX(-50%); width: 126px; height: 34px; background: #000; border-radius: 0 0 20px 20px; z-index: 100; }
+  .phone-screen { position: absolute; inset: 0; overflow: hidden; }
+  .status-bar { height: 54px; display: flex; align-items: flex-end; justify-content: space-between; padding: 0 28px 8px; font-size: 12px; font-weight: 600; flex-shrink: 0; }
+  .status-time { font-size: 15px; font-weight: 700; }
+  .status-icons { display: flex; gap: 6px; align-items: center; font-size: 11px; }
+
+  /* Screens */
+  .screen { position: absolute; inset: 0; display: none; flex-direction: column; background: #000; overflow: hidden; }
+  .screen.active { display: flex; }
+
+  /* Typography */
+  .title-lg { font-size: 28px; font-weight: 700; line-height: 1.2; }
+  .title-md { font-size: 20px; font-weight: 700; }
+  .title-sm { font-size: 17px; font-weight: 600; }
+  .body-text { font-size: 15px; line-height: 1.5; }
+  .caption { font-size: 12px; color: #888; }
+  .secondary { color: rgba(235,235,245,0.6); }
+
+  /* Colors */
+  .green { color: #30D158; }
+  .blue { color: #0A84FF; }
+  .orange { color: #FF9F0A; }
+  .red { color: #FF453A; }
+  .bg-green { background: #30D158; }
+  .bg-blue { background: #0A84FF; }
+
+  /* Components */
+  .nav-bar { padding: 12px 20px 4px; display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+  .nav-title { font-size: 17px; font-weight: 600; }
+  .nav-large-title { font-size: 34px; font-weight: 700; padding: 0 20px 8px; flex-shrink: 0; }
+  .nav-subtitle { font-size: 13px; color: rgba(235,235,245,0.6); padding: 0 20px 12px; flex-shrink: 0; }
+
+  .tab-bar { height: 83px; border-top: 1px solid #2a2a2a; display: flex; align-items: flex-start; padding-top: 10px; background: rgba(20,20,20,0.95); backdrop-filter: blur(20px); flex-shrink: 0; }
+  .tab-item { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; cursor: pointer; padding: 4px 0; }
+  .tab-icon { font-size: 22px; }
+  .tab-label { font-size: 10px; color: #888; }
+  .tab-item.active .tab-label { color: #30D158; }
+  .tab-item.active .tab-icon { filter: drop-shadow(0 0 4px #30D158); }
+  .tab-badge { position: relative; }
+  .tab-badge-dot { position: absolute; top: -3px; right: -6px; background: #FF453A; border-radius: 10px; min-width: 16px; height: 16px; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; padding: 0 4px; }
+
+  .scroll-content { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .scroll-content::-webkit-scrollbar { display: none; }
+
+  .section-header { font-size: 11px; font-weight: 600; color: rgba(235,235,245,0.6); text-transform: uppercase; letter-spacing: 0.5px; padding: 16px 20px 8px; }
+
+  .card { background: #1c1c1e; border-radius: 14px; margin: 0 16px 10px; overflow: hidden; }
+  .card-content { padding: 14px; }
+
+  .pill { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+  .pill-green { background: rgba(48,209,88,0.15); color: #30D158; }
+  .pill-blue { background: rgba(10,132,255,0.15); color: #0A84FF; }
+  .pill-orange { background: rgba(255,159,10,0.15); color: #FF9F0A; }
+  .pill-red { background: rgba(255,69,58,0.15); color: #FF453A; }
+  .pill-gray { background: rgba(255,255,255,0.1); color: #aaa; }
+
+  .btn-primary { background: #30D158; color: #000; border: none; border-radius: 14px; padding: 16px; font-size: 16px; font-weight: 600; width: 100%; cursor: pointer; }
+  .btn-secondary { background: rgba(255,255,255,0.1); color: #fff; border: none; border-radius: 14px; padding: 14px; font-size: 15px; font-weight: 500; width: 100%; cursor: pointer; }
+  .btn-text { background: none; border: none; color: #30D158; font-size: 15px; cursor: pointer; padding: 8px; }
+
+  .store-badge { display: inline-flex; align-items: center; padding: 2px 7px; border-radius: 5px; font-size: 9px; font-weight: 700; color: #fff; text-transform: uppercase; letter-spacing: 0.3px; }
+
+  .divider { height: 1px; background: #2a2a2a; margin: 0 20px; }
+
+  .search-bar { margin: 8px 16px 12px; background: #1c1c1e; border-radius: 12px; padding: 10px 14px; display: flex; align-items: center; gap: 8px; }
+  .search-bar input { background: none; border: none; color: #fff; font-size: 15px; outline: none; flex: 1; }
+  .search-icon { color: #888; font-size: 14px; }
+
+  /* Store colors */
+  .store-nofrills { background: #E8231B; }
+  .store-loblaws { background: #C71028; }
+  .store-metro { background: #00307A; }
+  .store-walmart { background: #0070DC; }
+  .store-freshco { background: #006B3E; }
+  .store-sobeys { background: #D12222; }
+  .store-costco { background: #005DAA; }
+  .store-foodbasics { background: #CC0000; }
+
+  /* Clickable hint */
+  .clickable { cursor: pointer; transition: opacity 0.1s; }
+  .clickable:active { opacity: 0.7; }
+
+  /* FAB */
+  .fab { position: absolute; bottom: 100px; right: 20px; width: 56px; height: 56px; background: #30D158; border-radius: 28px; display: flex; align-items: center; justify-content: center; font-size: 24px; box-shadow: 0 4px 20px rgba(48,209,88,0.4); cursor: pointer; z-index: 10; }
+
+  /* Chart */
+  .chart-area { height: 120px; position: relative; margin: 8px 0; }
+  .chart-line { position: absolute; bottom: 0; left: 0; right: 0; }
+
+  /* Toggle */
+  .toggle { width: 51px; height: 31px; background: #30D158; border-radius: 16px; position: relative; flex-shrink: 0; }
+  .toggle::after { content: ''; position: absolute; top: 2px; right: 2px; width: 27px; height: 27px; background: #fff; border-radius: 14px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); }
+  .toggle.off { background: #3a3a3c; }
+  .toggle.off::after { right: auto; left: 2px; }
+
+  /* Progress bar */
+  .progress-bar { height: 6px; background: #3a3a3c; border-radius: 3px; overflow: hidden; }
+  .progress-fill { height: 100%; background: #30D158; border-radius: 3px; }
+
+  /* Chip */
+  .chip { padding: 6px 14px; border-radius: 20px; font-size: 13px; font-weight: 500; border: none; cursor: pointer; white-space: nowrap; }
+  .chip-active { background: #fff; color: #000; font-weight: 600; }
+  .chip-inactive { background: #2c2c2e; color: #aaa; }
+
+  /* Carousel dot */
+  .dot { width: 8px; height: 8px; border-radius: 4px; background: rgba(255,255,255,0.3); transition: all 0.2s; }
+  .dot.active { width: 24px; background: #30D158; }
+</style>
+</head>
+<body>
+
+<div class="sidebar">
+  <div class="sidebar-title">SmartCart v2</div>
+
+  <div class="sidebar-group">
+    <div class="sidebar-group-label">Onboarding</div>
+    <div class="sidebar-item active" onclick="showScreen('splash')">Splash</div>
+    <div class="sidebar-item" onclick="showScreen('carousel')">Carousel</div>
+    <div class="sidebar-item" onclick="showScreen('onb-stores')">Store Selection</div>
+    <div class="sidebar-item" onclick="showScreen('onb-postal')">Postal Code</div>
+    <div class="sidebar-item" onclick="showScreen('onb-notif')">Notifications</div>
+    <div class="sidebar-item" onclick="showScreen('onb-scan')">First Scan CTA</div>
+  </div>
+
+  <div class="sidebar-group">
+    <div class="sidebar-group-label">Home</div>
+    <div class="sidebar-item" onclick="showScreen('home-empty')">Home — New User</div>
+    <div class="sidebar-item" onclick="showScreen('home-list')">Home — My List</div>
+    <div class="sidebar-item" onclick="showScreen('home-sale')">Home — On Sale Now</div>
+  </div>
+
+  <div class="sidebar-group">
+    <div class="sidebar-group-label">Deals</div>
+    <div class="sidebar-item" onclick="showScreen('deals-feed')">Deals Feed</div>
+    <div class="sidebar-item" onclick="showScreen('deals-flyer')">Flyer Browser 🔒</div>
+  </div>
+
+  <div class="sidebar-group">
+    <div class="sidebar-group-label">My List</div>
+    <div class="sidebar-item" onclick="showScreen('list-items')">My List — Items</div>
+    <div class="sidebar-item" onclick="showScreen('list-empty')">My List — Empty</div>
+  </div>
+
+  <div class="sidebar-group">
+    <div class="sidebar-group-label">Insights</div>
+    <div class="sidebar-item" onclick="showScreen('insights')">Insights Tab</div>
+  </div>
+
+  <div class="sidebar-group">
+    <div class="sidebar-group-label">Scanner</div>
+    <div class="sidebar-item" onclick="showScreen('scanner')">Camera View</div>
+    <div class="sidebar-item" onclick="showScreen('review')">Receipt Review</div>
+    <div class="sidebar-item" onclick="showScreen('success')">Success Sheet</div>
+  </div>
+
+  <div class="sidebar-group">
+    <div class="sidebar-group-label">Detail</div>
+    <div class="sidebar-item" onclick="showScreen('item-detail')">Item Detail</div>
+    <div class="sidebar-item" onclick="showScreen('settings')">Settings</div>
+  </div>
+</div>
+
+<div class="canvas">
+  <div class="phone">
+    <div class="phone-notch"></div>
+    <div class="phone-screen">
+
+      <!-- SPLASH -->
+      <div class="screen active" id="screen-splash">
+        <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;background:linear-gradient(180deg,#0d1f12 0%,#000 100%);">
+          <div style="width:96px;height:96px;background:linear-gradient(135deg,#30D158,#25a344);border-radius:28px;display:flex;align-items:center;justify-content:center;font-size:44px;box-shadow:0 8px 32px rgba(48,209,88,0.4);">🛒</div>
+          <div style="text-align:center;">
+            <div style="font-size:34px;font-weight:800;letter-spacing:-0.5px;">SmartCart</div>
+            <div style="font-size:16px;color:rgba(235,235,245,0.6);margin-top:6px;">Know when to buy</div>
+          </div>
+          <div style="width:200px;height:4px;background:#1c1c1e;border-radius:2px;overflow:hidden;margin-top:40px;">
+            <div style="width:60%;height:100%;background:#30D158;border-radius:2px;animation:load 2s ease-out forwards;"></div>
+          </div>
+        </div>
+        <div style="padding:0 0 40px;text-align:center;font-size:12px;color:#444;">Tap to continue</div>
+        <div class="clickable" style="position:absolute;inset:0;" onclick="showScreen('carousel')"></div>
+      </div>
+
+      <!-- CAROUSEL -->
+      <div class="screen" id="screen-carousel">
+        <div style="flex:1;display:flex;flex-direction:column;padding:60px 28px 0;">
+          <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:24px;text-align:center;">
+            <div style="font-size:80px;">🧾</div>
+            <div>
+              <div class="title-lg" style="margin-bottom:12px;">SmartCart remembers<br>what you buy</div>
+              <div class="body-text secondary">Scan any receipt and we build a personal price history — just for your items, at your stores.</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;justify-content:center;padding:24px 0;">
+            <div class="dot active"></div><div class="dot"></div><div class="dot"></div>
+          </div>
+        </div>
+        <div style="padding:16px 24px 48px;display:flex;gap:12px;">
+          <button class="btn-secondary" style="flex:1;" onclick="showScreen('splash')">Back</button>
+          <button class="btn-primary" style="flex:2;" onclick="showScreen('onb-stores')">Next</button>
+        </div>
+      </div>
+
+      <!-- ONBOARDING: STORES -->
+      <div class="screen" id="screen-onb-stores">
+        <div class="status-bar"><span class="status-time">9:41</span><span class="status-icons">●●● 100%</span></div>
+        <div style="padding:0 20px 16px;">
+          <div style="display:flex;gap:6px;justify-content:flex-start;margin-bottom:20px;">
+            <div class="dot active"></div><div class="dot"></div><div class="dot"></div>
+          </div>
+          <div class="title-lg" style="margin-bottom:8px;">Which stores do<br>you shop at?</div>
+          <div class="body-text secondary">SmartCart tracks flyers and prices for your chosen stores.</div>
+        </div>
+        <div class="scroll-content" style="padding:0 20px;">
+          <div style="display:flex;flex-wrap:wrap;gap:10px;padding-bottom:20px;">
+            <!-- Store chips -->
+            <div class="clickable" style="padding:10px 16px;background:#1e2a1e;border:1.5px solid #30D158;border-radius:24px;font-size:14px;font-weight:500;color:#30D158;">✓ No Frills</div>
+            <div class="clickable" style="padding:10px 16px;background:#2c2c2e;border:1.5px solid #3a3a3c;border-radius:24px;font-size:14px;font-weight:500;color:#fff;">Loblaws</div>
+            <div class="clickable" style="padding:10px 16px;background:#1e2a1e;border:1.5px solid #30D158;border-radius:24px;font-size:14px;font-weight:500;color:#30D158;">✓ Metro</div>
+            <div class="clickable" style="padding:10px 16px;background:#2c2c2e;border:1.5px solid #3a3a3c;border-radius:24px;font-size:14px;font-weight:500;color:#fff;">FreshCo</div>
+            <div class="clickable" style="padding:10px 16px;background:#2c2c2e;border:1.5px solid #3a3a3c;border-radius:24px;font-size:14px;font-weight:500;color:#fff;">Sobeys</div>
+            <div class="clickable" style="padding:10px 16px;background:#2c2c2e;border:1.5px solid #3a3a3c;border-radius:24px;font-size:14px;font-weight:500;color:#fff;">Walmart</div>
+            <div class="clickable" style="padding:10px 16px;background:#2c2c2e;border:1.5px solid #3a3a3c;border-radius:24px;font-size:14px;font-weight:500;color:#fff;">Food Basics</div>
+            <div class="clickable" style="padding:10px 16px;background:#2c2c2e;border:1.5px solid #3a3a3c;border-radius:24px;font-size:14px;font-weight:500;color:#fff;">Costco</div>
+            <div class="clickable" style="padding:10px 16px;background:#2c2c2e;border:1.5px solid #3a3a3c;border-radius:24px;font-size:14px;font-weight:500;color:#fff;">Giant Tiger</div>
+            <div class="clickable" style="padding:10px 16px;background:#2c2c2e;border:1.5px solid #3a3a3c;border-radius:24px;font-size:14px;font-weight:500;color:#fff;">T&T</div>
+          </div>
+          <div style="font-size:13px;color:#888;text-align:center;padding-bottom:12px;">2 stores selected</div>
+        </div>
+        <div style="padding:16px 24px 48px;">
+          <button class="btn-primary" onclick="showScreen('onb-postal')">Next →</button>
+        </div>
+      </div>
+
+      <!-- ONBOARDING: POSTAL CODE -->
+      <div class="screen" id="screen-onb-postal">
+        <div class="status-bar"><span class="status-time">9:41</span><span class="status-icons">●●● 100%</span></div>
+        <div style="padding:0 20px;">
+          <div style="display:flex;gap:6px;margin-bottom:20px;">
+            <div class="dot"></div><div class="dot active"></div><div class="dot"></div>
+          </div>
+          <div class="title-lg" style="margin-bottom:8px;">What's your<br>postal code?</div>
+          <div class="body-text secondary" style="margin-bottom:28px;">Finds flyers near you. Never shared or stored off-device.</div>
+          <div style="font-size:32px;font-weight:600;letter-spacing:6px;font-family:monospace;border-bottom:2px solid #30D158;padding-bottom:12px;margin-bottom:12px;">M5V 3A8</div>
+          <div style="display:flex;align-items:center;gap:6px;color:#30D158;font-size:14px;font-weight:500;">
+            <span>📍</span><span>Toronto, ON</span>
+          </div>
+          <div style="font-size:13px;color:#888;margin-top:20px;">You can skip this and add it later in Settings.</div>
+        </div>
+        <div style="flex:1;"></div>
+        <div style="padding:16px 24px 48px;display:flex;gap:12px;">
+          <button class="btn-secondary" style="flex:1;" onclick="showScreen('onb-notif')">Skip</button>
+          <button class="btn-primary" style="flex:2;" onclick="showScreen('onb-notif')">Next →</button>
+        </div>
+      </div>
+
+      <!-- ONBOARDING: NOTIFICATIONS -->
+      <div class="screen" id="screen-onb-notif">
+        <div class="status-bar"><span class="status-time">9:41</span><span class="status-icons">●●● 100%</span></div>
+        <div style="padding:0 20px;">
+          <div style="display:flex;gap:6px;margin-bottom:20px;">
+            <div class="dot"></div><div class="dot"></div><div class="dot active"></div>
+          </div>
+          <div class="title-lg" style="margin-bottom:8px;">Get price alerts</div>
+          <div class="body-text secondary" style="margin-bottom:28px;">We'll notify you when a tracked item hits a genuine low. Max 3 alerts per day.</div>
+          <div style="display:flex;flex-direction:column;gap:16px;">
+            <div style="display:flex;align-items:center;gap:14px;">
+              <div style="width:36px;height:36px;background:#1c2a3a;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;">📉</div>
+              <div style="font-size:15px;">Historical price low detected</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:14px;">
+              <div style="width:36px;height:36px;background:#1c2a3a;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;">🏷️</div>
+              <div style="font-size:15px;">Sale or flyer event at your stores</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:14px;">
+              <div style="width:36px;height:36px;background:#1c2a3a;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;">⏰</div>
+              <div style="font-size:15px;">Sale expiring tomorrow — last chance</div>
+            </div>
+          </div>
+        </div>
+        <div style="flex:1;"></div>
+        <div style="padding:16px 24px 48px;display:flex;flex-direction:column;gap:10px;">
+          <button class="btn-primary" onclick="showScreen('onb-scan')">Enable Alerts</button>
+          <button class="btn-text" onclick="showScreen('onb-scan')">Maybe later</button>
+        </div>
+      </div>
+
+      <!-- ONBOARDING: FIRST SCAN CTA (NEW F7) -->
+      <div class="screen" id="screen-onb-scan">
+        <div class="status-bar"><span class="status-time">9:41</span><span class="status-icons">●●● 100%</span></div>
+        <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px;text-align:center;gap:24px;">
+          <div style="width:120px;height:120px;background:#1c2a1e;border-radius:30px;display:flex;align-items:center;justify-content:center;font-size:56px;border:2px dashed #30D158;">🧾</div>
+          <div>
+            <div class="title-lg" style="margin-bottom:10px;">Scan your first receipt</div>
+            <div class="body-text secondary">SmartCart learns your prices from your real receipts. The more you scan, the smarter it gets.</div>
+          </div>
+          <div style="background:#1c1c1e;border-radius:14px;padding:16px;width:100%;text-align:left;">
+            <div style="font-size:13px;color:#888;margin-bottom:10px;">After scanning, SmartCart will:</div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div style="font-size:14px;">✓ Build your personal price history</div>
+              <div style="font-size:14px;">✓ Track replenishment cycles</div>
+              <div style="font-size:14px;">✓ Alert you when prices drop below your average</div>
+            </div>
+          </div>
+        </div>
+        <div style="padding:16px 24px 48px;display:flex;flex-direction:column;gap:10px;">
+          <button class="btn-primary" onclick="showScreen('scanner')">📷 Scan a Receipt</button>
+          <button class="btn-text" onclick="showScreen('home-empty')">Skip for now</button>
+        </div>
+      </div>
+
+      <!-- HOME: EMPTY (NEW USER) -->
+      <div class="screen" id="screen-home-empty">
+        <div class="status-bar"><span class="status-time">9:41</span><span class="status-icons">●●● 100%</span></div>
+        <div class="nav-large-title">Good morning 👋</div>
+        <div class="scroll-content">
+          <!-- Hero empty state -->
+          <div style="margin:8px 16px;background:linear-gradient(135deg,#1c2a1e,#0d1f12);border-radius:18px;padding:24px;text-align:center;">
+            <div style="font-size:48px;margin-bottom:12px;">🛒</div>
+            <div style="font-size:18px;font-weight:700;margin-bottom:8px;">No items yet</div>
+            <div style="font-size:14px;color:rgba(235,235,245,0.6);margin-bottom:20px;">Scan your first receipt and SmartCart starts learning what you buy.</div>
+            <button class="btn-primary clickable" style="margin-bottom:10px;" onclick="showScreen('scanner')">📷 Scan a Receipt</button>
+            <button class="btn-secondary clickable" onclick="showScreen('deals-feed')">Browse This Week's Deals</button>
+          </div>
+          <!-- Teaser: what you'll get -->
+          <div class="section-header">What you'll unlock</div>
+          <div class="card">
+            <div class="card-content" style="display:flex;flex-direction:column;gap:14px;">
+              <div style="display:flex;gap:12px;align-items:center;">
+                <div style="font-size:28px;">📉</div>
+                <div><div style="font-weight:600;margin-bottom:2px;">Price alerts</div><div style="font-size:13px;color:#888;">Know when your items hit a genuine low</div></div>
+              </div>
+              <div style="display:flex;gap:12px;align-items:center;">
+                <div style="font-size:28px;">🔄</div>
+                <div><div style="font-weight:600;margin-bottom:2px;">Replenishment tracking</div><div style="font-size:13px;color:#888;">SmartCart knows when you'll run out</div></div>
+              </div>
+              <div style="display:flex;gap:12px;align-items:center;">
+                <div style="font-size:28px;">💰</div>
+                <div><div style="font-weight:600;margin-bottom:2px;">Savings summary</div><div style="font-size:13px;color:#888;">See how much you save vs your averages</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="fab clickable" onclick="showScreen('scanner')">📷</div>
+        <div class="tab-bar">
+          <div class="tab-item active" onclick="showScreen('home-empty')"><div class="tab-icon">🏠</div><div class="tab-label">Home</div></div>
+          <div class="tab-item" onclick="showScreen('deals-feed')"><div class="tab-icon">🏷️</div><div class="tab-label">Deals</div></div>
+          <div class="tab-item" onclick="showScreen('list-empty')"><div class="tab-icon">🛒</div><div class="tab-label">My List</div></div>
+          <div class="tab-item" onclick="showScreen('insights')"><div class="tab-icon">📊</div><div class="tab-label">Insights</div></div>
+        </div>
+      </div>
+
+      <!-- HOME: MY LIST (RETURNING USER) -->
+      <div class="screen" id="screen-home-list">
+        <div class="status-bar"><span class="status-time">9:41</span><span class="status-icons">●●● 100%</span></div>
+        <div style="padding:0 20px 4px;display:flex;justify-content:space-between;align-items:flex-start;">
+          <div>
+            <div style="font-size:28px;font-weight:700;">Good morning,<br>Timothy 👋</div>
+            <div style="font-size:14px;color:rgba(235,235,245,0.6);margin-top:4px;">3 items near replenishment</div>
+          </div>
+          <div style="width:36px;height:36px;background:#1c1c1e;border-radius:18px;display:flex;align-items:center;justify-content:center;cursor:pointer;" onclick="showScreen('settings')">⚙️</div>
+        </div>
+        <!-- Alert banner -->
+        <div style="margin:12px 16px;background:linear-gradient(135deg,#1a2a1a,#0d1a0d);border-radius:14px;padding:12px 14px;display:flex;align-items:center;gap:10px;cursor:pointer;" onclick="showScreen('deals-feed')">
+          <div style="font-size:20px;">🔥</div>
+          <div style="flex:1;">
+            <div style="font-size:13px;font-weight:600;color:#30D158;">4 deals active right now</div>
+            <div style="font-size:12px;color:#888;margin-top:1px;">Oat Milk at No Frills · Eggs at Metro</div>
+          </div>
+          <div style="color:#888;font-size:14px;">›</div>
+        </div>
+        <!-- Segment tabs -->
+        <div style="display:flex;padding:0 16px;gap:8px;margin-bottom:4px;">
+          <div class="chip chip-active">My List</div>
+          <div class="chip chip-inactive clickable" onclick="showScreen('home-sale')">On Sale Now</div>
+        </div>
+        <div class="scroll-content">
+          <div class="section-header" style="color:#FF9F0A;">⏱ Running Low</div>
+          <!-- Item card -->
+          <div class="card clickable" style="margin-bottom:8px;" onclick="showScreen('item-detail')">
+            <div class="card-content" style="display:flex;gap:12px;align-items:center;">
+              <div style="width:48px;height:48px;background:#1e2a1e;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;">🥛</div>
+              <div style="flex:1;">
+                <div style="font-size:15px;font-weight:600;">Oatly Oat Milk 1L</div>
+                <div style="font-size:12px;color:#888;margin-top:2px;">Last bought 12 days ago · Avg every 14d</div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+                  <span style="font-size:15px;font-weight:700;color:#30D158;">$3.49</span>
+                  <span style="font-size:12px;color:#888;text-decoration:line-through;">$4.99</span>
+                  <span class="pill pill-orange">⏱ Due in 2d</span>
+                </div>
+              </div>
+              <div style="text-align:right;"><span class="store-badge store-nofrills">No Frills</span></div>
+            </div>
+            <div style="padding:0 14px 12px;">
+              <div class="progress-bar"><div class="progress-fill" style="width:85%;background:#FF9F0A;"></div></div>
+            </div>
+          </div>
+          <div class="card clickable" style="margin-bottom:8px;" onclick="showScreen('item-detail')">
+            <div class="card-content" style="display:flex;gap:12px;align-items:center;">
+              <div style="width:48px;height:48px;background:#2a2a1e;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;">🥚</div>
+              <div style="flex:1;">
+                <div style="font-size:15px;font-weight:600;">Eggs Large 12pk</div>
+                <div style="font-size:12px;color:#888;margin-top:2px;">Last bought 9 days ago · Avg every 10d</div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+                  <span style="font-size:15px;font-weight:700;">$5.49</span>
+                  <span class="pill pill-green">✓ Historical Low</span>
+                </div>
+              </div>
+            </div>
+            <div style="padding:0 14px 12px;">
+              <div class="progress-bar"><div class="progress-fill" style="width:90%;"></div></div>
+            </div>
+          </div>
+          <div class="section-header">Tracked Items</div>
+          <div class="card clickable" onclick="showScreen('item-detail')">
+            <div class="card-content" style="display:flex;gap:12px;align-items:center;">
+              <div style="width:48px;height:48px;background:#1e1e2a;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;">🍗</div>
+              <div style="flex:1;">
+                <div style="font-size:15px;font-weight:600;">Chicken Breast 1kg</div>
+                <div style="font-size:12px;color:#888;margin-top:2px;">Last bought 3 days ago · Avg every 12d</div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:6px;">
+                  <span style="font-size:15px;font-weight:700;">$12.99</span>
+                  <span class="pill pill-gray">Due in 9d</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div style="height:80px;"></div>
+        </div>
+        <div class="fab clickable" onclick="showScreen('scanner')">📷</div>
+        <div class="tab-bar">
+          <div class="tab-item active"><div class="tab-icon">🏠</div><div class="tab-label">Home</div></div>
+          <div class="tab-item" onclick="showScreen('deals-feed')"><div class="tab-icon">🏷️</div><div class="tab-label">Deals</div></div>
+          <div class="tab-item" onclick="showScreen('list-items')"><div class="tab-badge"><div class="tab-icon">🛒</div><div class="tab-badge-dot">3</div></div><div class="tab-label">My List</div></div>
+          <div class="tab-item" onclick="showScreen('insights')"><div class="tab-icon">📊</div><div class="tab-label">Insights</div></div>
+        </div>
+      </div>
+
+      <!-- HOME: ON SALE NOW -->
+      <div class="screen" id="screen-home-sale">
+        <div class="status-bar"><span class="status-time">9:41</span><span class="status-icons">●●● 100%</span></div>
+        <div style="padding:0 20px 4px;">
+          <div style="font-size:28px;font-weight:700;">Good morning,<br>Timothy 👋</div>
+        </div>
+        <div style="display:flex;padding:12px 16px;gap:8px;margin-bottom:4px;">
+          <div class="chip chip-inactive clickable" onclick="showScreen('home-list')">My List</div>
+          <div class="chip chip-active">On Sale Now</div>
+        </div>
+        <div class="scroll-content">
+          <div class="section-header">4 deals at your stores this week</div>
+          <div class="card clickable" style="margin-bottom:8px;">
+            <div class="card-content" style="display:flex;gap:12px;align-items:center;">
+              <div style="width:48px;height:48px;background:#1e2a1e;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;">🥛</div>
+              <div style="flex:1;">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;"><span class="store-badge store-nofrills">No Frills</span><span style="font-size:11px;color:#888;">May 15–21</span></div>
+                <div style="font-size:15px;font-weight:600;">Oatly Oat Milk 1L</div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+                  <span style="font-size:16px;font-weight:700;color:#30D158;">$3.49</span>
+                  <span style="font-size:12px;color:#888;text-decoration:line-through;">$4.99</span>
+                  <span class="pill pill-green">−30%</span>
+                </div>
+                <div style="font-size:12px;color:#30D158;margin-top:3px;">Save $1.50 · You usually pay $4.60</div>
+              </div>
+              <button style="width:34px;height:34px;border-radius:17px;background:#30D158;border:none;color:#000;font-size:16px;font-weight:700;cursor:pointer;">+</button>
+            </div>
+          </div>
+          <div class="card clickable" style="margin-bottom:8px;">
+            <div class="card-content" style="display:flex;gap:12px;align-items:center;">
+              <div style="width:48px;height:48px;background:#2a1e1e;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;">🥩</div>
+              <div style="flex:1;">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;"><span class="store-badge store-metro">Metro</span><span style="font-size:11px;color:#888;">May 15–21</span></div>
+                <div style="font-size:15px;font-weight:600;">Lean Ground Beef 1kg</div>
+                <div style="display:flex;align-items:center;gap:8px;margin-top:4px;">
+                  <span style="font-size:16px;font-weight:700;color:#30D158;">$8.99</span>
+                  <span style="font-size:12px;color:#888;text-decoration:line-through;">$12.99</span>
+                  <span class="pill pill-green">−31%</span>
+                </div>
+              </div>
+              <button style="width:34px;height:34px;border-radius:17px;background:#1c1c1e;border:none;color:#888;font-size:16px;cursor:pointer;">+</button>
+            </div>
+          </div>
+          <div style="height:80px;"></div>
+        </div>
+        <div class="fab clickable" onclick="showScreen('scanner')">📷</div>
+        <div class="tab-bar">
+          <div class="tab-item active"><div class="tab-icon">🏠</div><div class="tab-label">Home</div></div>
+          <div class="tab-item" onclick="showScreen('deals-feed')"><div class="tab-icon">🏷️</div><div class="tab-label">Deals</div></div>
+          <div class="tab-item" onclick="showScreen('list-items')"><div class="tab-badge"><div class="tab-icon">🛒</div><div class="tab-badge-dot">3</div></div><div class="tab-label">My List</div></div>
+          <div class="tab-item" onclick="showScreen('insights')"><div class="tab-icon">📊</div><div class="tab-label">Insights</div></div>
+        </div>
+      </div>
+
+      <!-- DEALS FEED -->
+      <div class="screen" id="screen-deals-feed">
+        <div class="status-bar"><span class="status-time">9:41</span><span class="status-icons">●●● 100%</span></div>
+        <div class="nav-large-title">Deals</div>
+        <div class="nav-subtitle">This week's best prices near you</div>
+        <div class="search-bar"><span class="search-icon">🔍</span><input type="text" placeholder="Search deals…" /></div>
+        <div class="scroll-content">
+          <!-- Best price carousel -->
+          <div class="section-header">Best prices this week</div>
+          <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:4px;">
+            <div style="display:flex;gap:10px;padding:0 16px;width:max-content;">
+              <!-- Card 1 -->
+              <div style="width:155px;background:#1c1c1e;border-radius:18px;padding:14px;border:1px solid rgba(255,255,255,0.07);flex-shrink:0;">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px;">
+                  <div style="width:44px;height:44px;background:rgba(255,255,255,0.08);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;">🥛</div>
+                  <div style="text-align:right;"><span style="background:rgba(255,215,0,0.15);color:#FFD700;font-size:9px;font-weight:800;padding:3px 7px;border-radius:5px;">BEST</span><div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.45);margin-top:3px;">NO FRILLS</div></div>
+                </div>
+                <div style="font-size:12px;color:rgba(255,255,255,0.65);margin-bottom:8px;line-height:1.4;">Oatly Oat Milk 1L</div>
+                <div style="font-size:26px;font-weight:900;font-variant-numeric:tabular-nums;margin-bottom:6px;">$3.49</div>
+                <div style="display:flex;gap:6px;align-items:center;"><span style="font-size:11px;color:rgba(255,255,255,0.28);text-decoration:line-through;">$4.99</span><span style="font-size:11px;font-weight:600;color:#30D158;">Save $1.50</span></div>
+              </div>
+              <!-- Card 2 -->
+              <div style="width:155px;background:#1c1c1e;border-radius:18px;padding:14px;border:1px solid rgba(255,255,255,0.07);flex-shrink:0;">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px;">
+                  <div style="width:44px;height:44px;background:rgba(255,255,255,0.08);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;">🥚</div>
+                  <div style="text-align:right;"><span style="background:rgba(255,215,0,0.15);color:#FFD700;font-size:9px;font-weight:800;padding:3px 7px;border-radius:5px;">BEST</span><div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.45);margin-top:3px;">METRO</div></div>
+                </div>
+                <div style="font-size:12px;color:rgba(255,255,255,0.65);margin-bottom:8px;line-height:1.4;">Eggs Large 12pk</div>
+                <div style="font-size:26px;font-weight:900;font-variant-numeric:tabular-nums;margin-bottom:6px;">$5.49</div>
+                <div style="display:flex;gap:6px;align-items:center;"><span style="font-size:11px;color:rgba(255,255,255,0.28);text-decoration:line-through;">$7.49</span><span style="font-size:11px;font-weight:600;color:#30D158;">Save $2.00</span></div>
+              </div>
+              <!-- Card 3 -->
+              <div style="width:155px;background:#1c1c1e;border-radius:18px;padding:14px;border:1px solid rgba(255,255,255,0.07);flex-shrink:0;">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:10px;">
+                  <div style="width:44px;height:44px;background:rgba(255,255,255,0.08);border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:24px;">🍞</div>
+                  <div style="text-align:right;"><span style="background:rgba(255,215,0,0.15);color:#FFD700;font-size:9px;font-weight:800;padding:3px 7px;border-radius:5px;">BEST</span><div style="font-size:10px;font-weight:600;color:rgba(255,255,255,0.45);margin-top:3px;">NO FRILLS</div></div>
+                </div>
+                <div style="font-size:12px;color:rgba(255,255,255,0.65);margin-bottom:8px;line-height:1.4;">Wonder Bread White 675g</div>
+                <div style="font-size:26px;font-weight:900;font-variant-numeric:tabular-nums;margin-bottom:6px;">$2.99</div>
+                <div style="display:flex;gap:6px;align-items:center;"><span style="font-size:11px;color:rgba(255,255,255,0.28);text-decoration:line-through;">$4.49</span><span style="font-size:11px;font-weight:600;color:#30D158;">Save $1.50</span></div>
+              </div>
+            </div>
+          </div>
+          <!-- Category chips -->
+          <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;padding:10px 0;">
+            <div style="display:flex;gap:8px;padding:0 16px;width:max-content;">
+              <div class="chip chip-active">All</div>
+              <div class="chip chip-inactive">🥛 Dairy</div>
+              <div class="chip chip-inactive">🥩 Meat</div>
+              <div class="chip chip-inactive">🥦 Produce</div>
+              <div class="chip chip-inactive">🍞 Bakery</div>
+              <div class="chip chip-inactive">🥫 Pantry</div>
+            </div>
+          </div>
+          <!-- Flyer browser entry -->
+          <div style="margin:4px 16px 12px;background:linear-gradient(135deg,#1a1a2e,#0d0d1f);border-radius:14px;padding:14px;display:flex;align-items:center;gap:12px;cursor:pointer;" onclick="showScreen('deals-flyer')">
+            <div style="font-size:28px;">📰</div>
+            <div style="flex:1;">
+              <div style="font-size:15px;font-weight:600;margin-bottom:2px;">Browse Store Flyers</div>
+              <div style="font-size:13px;color:#888;">See full weekly circulars for your stores</div>
+            </div>
+            <div style="color:#888;">›</div>
+          </div>
+          <!-- Deal rows -->
+          <div style="display:flex;flex-direction:column;gap:8px;padding:0 16px 24px;">
+            <div class="clickable" style="background:#1c1c1e;border-radius:12px;padding:12px 14px;display:flex;gap:10px;align-items:center;">
+              <div style="width:44px;height:44px;background:#2a2a2a;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;">🥛</div>
+              <div style="flex:1;">
+                <div style="display:flex;gap:5px;align-items:center;margin-bottom:3px;"><span class="store-badge store-nofrills">No Frills</span><span style="font-size:10px;color:#888;">May 15–21</span></div>
+                <div style="font-size:13px;font-weight:600;">Oatly Oat Milk 1L</div>
+                <div style="display:flex;gap:5px;align-items:center;margin-top:3px;">
+                  <span style="font-size:15px;font-weight:700;">$3.49</span>
+                  <span style="font-size:11px;color:#888;text-decoration:line-through;">$4.99</span>
+                  <span style="background:rgba(48,209,88,0.12);color:#30D158;font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;">−30%</span>
+                </div>
+              </div>
+              <button style="width:30px;height:30px;border-radius:15px;background:#30D158;border:none;color:#000;font-size:14px;font-weight:700;cursor:pointer;">+</button>
+            </div>
+            <div class="clickable" style="background:#1c1c1e;border-radius:12px;padding:12px 14px;display:flex;gap:10px;align-items:center;">
+              <div style="width:44px;height:44px;background:#2a2a2a;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;">🥚</div>
+              <div style="flex:1;">
+                <div style="display:flex;gap:5px;align-items:center;margin-bottom:3px;"><span class="store-badge store-metro">Metro</span><span style="font-size:10px;color:#888;">May 15–21</span></div>
+                <div style="font-size:13px;font-weight:600;">Eggs Large 12pk</div>
+                <div style="display:flex;gap:5px;align-items:center;margin-top:3px;">
+                  <span style="font-size:15px;font-weight:700;">$5.49</span>
+                  <span style="font-size:11px;color:#888;text-decoration:line-through;">$7.49</span>
+                  <span style="background:rgba(48,209,88,0.12);color:#30D158;font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;">−27%</span>
+                </div>
+              </div>
+              <button style="width:30px;height:30px;border-radius:15px;background:#1c1c1e;border:1px solid #3a3a3c;color:#888;font-size:14px;cursor:pointer;">✓</button>
+            </div>
+            <div class="clickable" style="background:#1c1c1e;border-radius:12px;padding:12px 14px;display:flex;gap:10px;align-items:center;">
+              <div style="width:44px;height:44px;background:#2a2a2a;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;">🍞</div>
+              <div style="flex:1;">
+                <div style="display:flex;gap:5px;align-items:center;margin-bottom:3px;"><span class="store-badge store-nofrills">No Frills</span><span style="font-size:10px;color:#888;">May 15–21</span></div>
+                <div style="font-size:13px;font-weight:600;">Wonder Bread White 675g</div>
+                <div style="display:flex;gap:5px;align-items:center;margin-top:3px;">
+                  <span style="font-size:15px;font-weight:700;">$2.99</span>
+                  <span style="font-size:11px;color:#888;text-decoration:line-through;">$4.49</span>
+                  <span style="background:rgba(48,209,88,0.12);color:#30D158;font-size:9px;font-weight:700;padding:1px 5px;border-radius:4px;">−33%</span>
+                </div>
+              </div>
+              <button style="width:30px;height:30px;border-radius:15px;background:#1c1c1e;border:1px solid #3a3a3c;color:#888;font-size:14px;cursor:pointer;">+</button>
+            </div>
+          </div>
+        </div>
+        <div class="tab-bar">
+          <div class="tab-item" onclick="showScreen('home-list')"><div class="tab-icon">🏠</div><div class="tab-label">Home</div></div>
+          <div class="tab-item active"><div class="tab-icon">🏷️</div><div class="tab-label">Deals</div></div>
+          <div class="tab-item" onclick="showScreen('list-items')"><div class="tab-badge"><div class="tab-icon">🛒</div><div class="tab-badge-dot">3</div></div><div class="tab-label">My List</div></div>
+          <div class="tab-item" onclick="showScreen('insights')"><div class="tab-icon">📊</div><div class="tab-label">Insights</div></div>
+        </div>
+      </div>
+
+      <!-- DEALS: FLYER BROWSER (LOCKED) -->
+      <div class="screen" id="screen-deals-flyer">
+        <div class="status-bar"><span class="status-time">9:41</span><span class="status-icons">●●● 100%</span></div>
+        <div class="nav-bar"><button style="background:none;border:none;color:#30D158;font-size:16px;cursor:pointer;" onclick="showScreen('deals-feed')">‹ Deals</button><div class="nav-title">Store Flyers</div><div style="width:60px;"></div></div>
+        <!-- Store selector -->
+        <div style="overflow-x:auto;padding:8px 16px;"><div style="display:flex;gap:8px;width:max-content;">
+          <div class="chip chip-active">No Frills</div>
+          <div class="chip chip-inactive">Metro</div>
+          <div class="chip chip-inactive">Loblaws</div>
+          <div class="chip chip-inactive">FreshCo</div>
+        </div></div>
+        <div class="scroll-content">
+          <!-- Flyer meta -->
+          <div style="padding:12px 16px;display:flex;align-items:center;gap:12px;background:#1c1c1e;margin:0 16px;border-radius:14px;margin-bottom:12px;">
+            <div style="font-size:28px;">🟡</div>
+            <div><div style="font-size:16px;font-weight:700;">No Frills</div><div style="font-size:13px;color:#888;">Valid May 15 – May 21, 2026</div></div>
+          </div>
+          <!-- Flyer pages placeholder -->
+          <div style="padding:0 16px;display:flex;flex-direction:column;gap:10px;">
+            <div style="background:#1c1c1e;border-radius:14px;height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;">
+              <div style="font-size:40px;">📄</div>
+              <div style="text-align:center;padding:0 24px;">
+                <div style="font-size:15px;font-weight:600;margin-bottom:6px;">Flyer pages coming soon</div>
+                <div style="font-size:13px;color:#888;">We're confirming our data license with Flipp to enable full flyer browsing. Deal discovery is available now.</div>
+              </div>
+              <div class="pill pill-orange">Pending approval</div>
+            </div>
+            <div style="background:#1c2a1e;border-radius:14px;padding:16px;">
+              <div style="font-size:14px;font-weight:600;margin-bottom:8px;color:#30D158;">Available now: Deal Search</div>
+              <div style="font-size:13px;color:#888;">Browse this week's best prices from No Frills and your other stores in the Deals tab.</div>
+              <button class="btn-primary" style="margin-top:12px;padding:12px;" onclick="showScreen('deals-feed')">Browse Deals</button>
+            </div>
+          </div>
+        </div>
+        <div class="tab-bar">
+          <div class="tab-item" onclick="showScreen('home-list')"><div class="tab-icon">🏠</div><div class="tab-label">Home</div></div>
+          <div class="tab-item active"><div class="tab-icon">🏷️</div><div class="tab-label">Deals</div></div>
+          <div class="tab-item" onclick="showScreen('list-items')"><div class="tab-badge"><div class="tab-icon">🛒</div><div class="tab-badge-dot">3</div></div><div class="tab-label">My List</div></div>
+          <div class="tab-item" onclick="showScreen('insights')"><div class="tab-icon">📊</div><div class="tab-label">Insights</div></div>
+        </div>
+      </div>
+
+      <!-- MY LIST: ITEMS -->
+      <div class="screen" id="screen-list-items">
+        <div class="status-bar"><span class="status-time">9:41</span><span class="status-icons">●●● 100%</span></div>
+        <div class="nav-large-title">My List</div>
+        <div class="scroll-content">
+          <!-- Pre-shop banner -->
+          <div style="margin:4px 16px 12px;background:linear-gradient(135deg,#1a2a1e,#0d1f12);border-radius:14px;padding:12px 14px;display:flex;align-items:center;gap:10px;">
+            <div style="font-size:20px;">💡</div>
+            <div style="flex:1;"><div style="font-size:13px;font-weight:600;margin-bottom:1px;">Pre-Shop Check</div><div style="font-size:12px;color:#888;">Oat Milk is $1.50 cheaper at No Frills this week</div></div>
+            <button style="background:rgba(48,209,88,0.15);border:none;color:#30D158;font-size:12px;font-weight:600;padding:5px 10px;border-radius:8px;cursor:pointer;">View</button>
+          </div>
+          <!-- List items -->
+          <div style="display:flex;flex-direction:column;gap:1px;background:#2a2a2a;border-radius:14px;margin:0 16px;overflow:hidden;">
+            <div style="background:#1c1c1e;padding:14px;display:flex;align-items:center;gap:12px;">
+              <div style="width:26px;height:26px;border-radius:13px;border:2px solid #30D158;display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:14px;">✓</div>
+              <div style="flex:1;">
+                <div style="font-size:15px;font-weight:500;text-decoration:line-through;color:#888;">Oatly Oat Milk 1L</div>
+                <div style="font-size:12px;color:#555;margin-top:1px;">~$3.49 · No Frills</div>
+              </div>
+            </div>
+            <div style="background:#1c1c1e;padding:14px;display:flex;align-items:center;gap:12px;">
+              <div style="width:26px;height:26px;border-radius:13px;border:2px solid #3a3a3c;cursor:pointer;"></div>
+              <div style="flex:1;">
+                <div style="font-size:15px;font-weight:500;">Eggs Large 12pk</div>
+                <div style="font-size:12px;color:#888;margin-top:1px;">~$5.49 · Metro</div>
+              </div>
+              <span class="pill pill-green" style="font-size:10px;">On sale</span>
+            </div>
+            <div style="background:#1c1c1e;padding:14px;display:flex;align-items:center;gap:12px;">
+              <div style="width:26px;height:26px;border-radius:13px;border:2px solid #3a3a3c;cursor:pointer;"></div>
+              <div style="flex:1;">
+                <div style="font-size:15px;font-weight:500;">Chicken Breast 1kg</div>
+                <div style="font-size:12px;color:#888;margin-top:1px;">~$12.99</div>
+              </div>
+            </div>
+            <div style="background:#1c1c1e;padding:14px;display:flex;align-items:center;gap:12px;">
+              <div style="width:26px;height:26px;border-radius:13px;border:2px solid #3a3a3c;cursor:pointer;"></div>
+              <div style="flex:1;">
+                <div style="font-size:15px;font-weight:500;">Wonder Bread White</div>
+                <div style="font-size:12px;color:#888;margin-top:1px;">~$2.99 · No Frills</div>
+              </div>
+              <span class="pill pill-green" style="font-size:10px;">On sale</span>
+            </div>
+          </div>
+          <div style="padding:16px 20px;"><button style="background:none;border:none;color:#30D158;font-size:15px;cursor:pointer;">+ Add item</button></div>
+          <div style="height:30px;"></div>
+        </div>
+        <div class="tab-bar">
+          <div class="tab-item" onclick="showScreen('home-list')"><div class="tab-icon">🏠</div><div class="tab-label">Home</div></div>
+          <div class="tab-item" onclick="showScreen('deals-feed')"><div class="tab-icon">🏷️</div><div class="tab-label">Deals</div></div>
+          <div class="tab-item active"><div class="tab-badge"><div class="tab-icon">🛒</div><div class="tab-badge-dot">3</div></div><div class="tab-label">My List</div></div>
+          <div class="tab-item" onclick="showScreen('insights')"><div class="tab-icon">📊</div><div class="tab-label">Insights</div></div>
+        </div>
+      </div>
+
+      <!-- MY LIST: EMPTY -->
+      <div class="screen" id="screen-list-empty">
+        <div class="status-bar"><span class="status-time">9:41</span><span class="status-icons">●●● 100%</span></div>
+        <div class="nav-large-title">My List</div>
+        <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:28px;text-align:center;">
+          <div style="font-size:64px;">🛒</div>
+          <div><div style="font-size:20px;font-weight:700;margin-bottom:8px;">Your list is empty</div><div style="font-size:15px;color:#888;">Add items from the Deals tab or tap + on any tracked item.</div></div>
+          <button class="btn-primary" onclick="showScreen('deals-feed')">Browse Deals</button>
+        </div>
+        <div class="tab-bar">
+          <div class="tab-item" onclick="showScreen('home-empty')"><div class="tab-icon">🏠</div><div class="tab-label">Home</div></div>
+          <div class="tab-item" onclick="showScreen('deals-feed')"><div class="tab-icon">🏷️</div><div class="tab-label">Deals</div></div>
+          <div class="tab-item active"><div class="tab-icon">🛒</div><div class="tab-label">My List</div></div>
+          <div class="tab-item" onclick="showScreen('insights')"><div class="tab-icon">📊</div><div class="tab-label">Insights</div></div>
+        </div>
+      </div>
+
+      <!-- INSIGHTS TAB -->
+      <div class="screen" id="screen-insights">
+        <div class="status-bar"><span class="status-time">9:41</span><span class="status-icons">●●● 100%</span></div>
+        <div class="nav-large-title">Insights</div>
+        <div class="scroll-content">
+          <!-- Weekly spend -->
+          <div class="section-header">Weekly Spend</div>
+          <div class="card"><div class="card-content">
+            <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:16px;">
+              <div><div style="font-size:13px;color:#888;">This month</div><div style="font-size:28px;font-weight:700;">$284.50</div></div>
+              <div style="text-align:right;"><div style="font-size:13px;color:#888;">vs last month</div><div style="font-size:16px;font-weight:600;color:#30D158;">↓ $23.10</div></div>
+            </div>
+            <!-- Bar chart -->
+            <div style="display:flex;align-items:flex-end;gap:6px;height:80px;">
+              <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;"><div style="width:100%;background:#30D158;border-radius:4px 4px 0 0;height:55px;opacity:0.5;"></div><div style="font-size:10px;color:#888;">W1</div></div>
+              <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;"><div style="width:100%;background:#30D158;border-radius:4px 4px 0 0;height:70px;opacity:0.5;"></div><div style="font-size:10px;color:#888;">W2</div></div>
+              <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;"><div style="width:100%;background:#30D158;border-radius:4px 4px 0 0;height:45px;opacity:0.5;"></div><div style="font-size:10px;color:#888;">W3</div></div>
+              <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;"><div style="width:100%;background:#30D158;border-radius:4px 4px 0 0;height:62px;"></div><div style="font-size:10px;color:#888;">W4</div></div>
+            </div>
+          </div></div>
+          <!-- Best savings -->
+          <div class="section-header">Top Savings This Month</div>
+          <div class="card"><div class="card-content" style="display:flex;flex-direction:column;gap:12px;">
+            <div style="display:flex;gap:10px;align-items:center;">
+              <div style="font-size:24px;">🥛</div>
+              <div style="flex:1;"><div style="font-size:14px;font-weight:600;">Oatly Oat Milk</div><div style="font-size:12px;color:#888;">Bought 3× below your average</div></div>
+              <div style="font-size:15px;font-weight:700;color:#30D158;">+$4.50</div>
+            </div>
+            <div style="height:1px;background:#2a2a2a;"></div>
+            <div style="display:flex;gap:10px;align-items:center;">
+              <div style="font-size:24px;">🥚</div>
+              <div style="flex:1;"><div style="font-size:14px;font-weight:600;">Eggs Large 12pk</div><div style="font-size:12px;color:#888;">Caught historical low twice</div></div>
+              <div style="font-size:15px;font-weight:700;color:#30D158;">+$4.00</div>
+            </div>
+            <div style="height:1px;background:#2a2a2a;"></div>
+            <div style="display:flex;gap:10px;align-items:center;">
+              <div style="font-size:24px;">🍗</div>
+              <div style="flex:1;"><div style="font-size:14px;font-weight:600;">Chicken Breast</div><div style="font-size:12px;color:#888;">Bought on sale vs regular</div></div>
+              <div style="font-size:15px;font-weight:700;color:#30D158;">+$4.00</div>
+            </div>
+          </div></div>
+          <!-- Store breakdown -->
+          <div class="section-header">Spend by Store</div>
+          <div class="card"><div class="card-content" style="display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;align-items:center;gap:10px;"><span class="store-badge store-nofrills" style="font-size:10px;padding:3px 8px;">No Frills</span><div class="progress-bar" style="flex:1;"><div class="progress-fill" style="width:60%;"></div></div><div style="font-size:13px;font-weight:600;min-width:50px;text-align:right;">$171</div></div>
+            <div style="display:flex;align-items:center;gap:10px;"><span class="store-badge store-metro" style="font-size:10px;padding:3px 8px;">Metro</span><div class="progress-bar" style="flex:1;"><div class="progress-fill" style="width:30%;"></div></div><div style="font-size:13px;font-weight:600;min-width:50px;text-align:right;">$85</div></div>
+            <div style="display:flex;align-items:center;gap:10px;"><span class="store-badge" style="background:#555;font-size:10px;padding:3px 8px;">Other</span><div class="progress-bar" style="flex:1;"><div class="progress-fill" style="width:10%;background:#888;"></div></div><div style="font-size:13px;font-weight:600;min-width:50px;text-align:right;">$28</div></div>
+          </div></div>
+          <!-- Rising prices -->
+          <div class="section-header">⚠️ Rising Prices</div>
+          <div class="card"><div class="card-content" style="display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;gap:10px;align-items:center;"><div style="font-size:22px;">🧈</div><div style="flex:1;"><div style="font-size:14px;font-weight:600;">Butter 454g</div><div style="font-size:12px;color:#888;">Up 18% in 90 days</div></div><div style="font-size:13px;color:#FF453A;font-weight:600;">↑ $1.20</div></div>
+            <div style="height:1px;background:#2a2a2a;"></div>
+            <div style="display:flex;gap:10px;align-items:center;"><div style="font-size:22px;">🫙</div><div style="flex:1;"><div style="font-size:14px;font-weight:600;">Olive Oil 750ml</div><div style="font-size:12px;color:#888;">Up 12% in 90 days</div></div><div style="font-size:13px;color:#FF453A;font-weight:600;">↑ $2.50</div></div>
+          </div></div>
+          <div style="height:30px;"></div>
+        </div>
+        <div class="tab-bar">
+          <div class="tab-item" onclick="showScreen('home-list')"><div class="tab-icon">🏠</div><div class="tab-label">Home</div></div>
+          <div class="tab-item" onclick="showScreen('deals-feed')"><div class="tab-icon">🏷️</div><div class="tab-label">Deals</div></div>
+          <div class="tab-item" onclick="showScreen('list-items')"><div class="tab-badge"><div class="tab-icon">🛒</div><div class="tab-badge-dot">3</div></div><div class="tab-label">My List</div></div>
+          <div class="tab-item active"><div class="tab-icon">📊</div><div class="tab-label">Insights</div></div>
+        </div>
+      </div>
+
+      <!-- SCANNER -->
+      <div class="screen" id="screen-scanner">
+        <div style="flex:1;background:#111;position:relative;display:flex;flex-direction:column;">
+          <div style="position:absolute;top:0;left:0;right:0;padding:54px 20px 12px;display:flex;align-items:center;justify-content:space-between;z-index:10;">
+            <button style="background:rgba(0,0,0,0.5);border:none;color:#fff;font-size:16px;padding:8px 14px;border-radius:20px;cursor:pointer;" onclick="showScreen('home-list')">✕</button>
+            <div style="font-size:17px;font-weight:600;">Scan Receipt</div>
+            <!-- Store selector -->
+            <div style="background:rgba(0,0,0,0.5);border-radius:20px;padding:6px 12px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;">No Frills <span style="font-size:10px;">▾</span></div>
+          </div>
+          <!-- Camera frame -->
+          <div style="flex:1;display:flex;align-items:center;justify-content:center;position:relative;">
+            <div style="width:300px;height:400px;position:relative;">
+              <!-- Corner brackets -->
+              <div style="position:absolute;top:0;left:0;width:24px;height:24px;border-top:3px solid #30D158;border-left:3px solid #30D158;border-radius:4px 0 0 0;"></div>
+              <div style="position:absolute;top:0;right:0;width:24px;height:24px;border-top:3px solid #30D158;border-right:3px solid #30D158;border-radius:0 4px 0 0;"></div>
+              <div style="position:absolute;bottom:0;left:0;width:24px;height:24px;border-bottom:3px solid #30D158;border-left:3px solid #30D158;border-radius:0 0 0 4px;"></div>
+              <div style="position:absolute;bottom:0;right:0;width:24px;height:24px;border-bottom:3px solid #30D158;border-right:3px solid #30D158;border-radius:0 0 4px 0;"></div>
+              <!-- Simulated viewfinder content -->
+              <div style="position:absolute;inset:4px;background:rgba(255,255,255,0.04);display:flex;align-items:center;justify-content:center;font-size:13px;color:#888;text-align:center;">Fit receipt<br>inside frame</div>
+              <!-- Scan line -->
+              <div style="position:absolute;left:4px;right:4px;height:2px;background:linear-gradient(90deg,transparent,#30D158,transparent);top:30%;opacity:0.8;"></div>
+            </div>
+          </div>
+          <!-- Tips -->
+          <div style="display:flex;justify-content:center;gap:20px;padding:0 20px 16px;">
+            <div style="font-size:12px;color:#888;text-align:center;">📄 Flatten</div>
+            <div style="font-size:12px;color:#888;text-align:center;">💡 Good light</div>
+            <div style="font-size:12px;color:#888;text-align:center;">👁 All lines</div>
+          </div>
+        </div>
+        <!-- Controls -->
+        <div style="background:#1a1a1a;padding:16px 24px 48px;display:flex;align-items:center;justify-content:space-between;">
+          <div style="width:44px;height:44px;background:#2c2c2e;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;cursor:pointer;">⊞</div>
+          <div class="clickable" style="width:72px;height:72px;border:3px solid #fff;border-radius:36px;display:flex;align-items:center;justify-content:center;cursor:pointer;" onclick="showScreen('review')">
+            <div style="width:60px;height:60px;background:#fff;border-radius:30px;"></div>
+          </div>
+          <div style="width:44px;height:44px;background:#2c2c2e;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px;cursor:pointer;">⬆</div>
+        </div>
+      </div>
+
+      <!-- RECEIPT REVIEW -->
+      <div class="screen" id="screen-review">
+        <div class="status-bar"><span class="status-time">9:41</span><span class="status-icons">●●● 100%</span></div>
+        <!-- Header -->
+        <div style="padding:8px 20px 12px;border-bottom:1px solid #2a2a2a;">
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div style="width:44px;height:44px;background:#E8231B;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:22px;">🟡</div>
+            <div style="flex:1;"><div style="font-size:16px;font-weight:700;">No Frills · Toronto</div><div style="font-size:13px;color:#888;">May 15, 2026 · $47.23 · 8 items</div></div>
+          </div>
+          <!-- Warning -->
+          <div style="background:rgba(255,159,10,0.15);border-radius:10px;padding:10px 12px;margin-top:10px;display:flex;align-items:center;gap:8px;">
+            <span style="font-size:14px;">⚠️</span><span style="font-size:13px;color:#FF9F0A;font-weight:500;">1 item couldn't be matched — tap to fix</span>
+          </div>
+        </div>
+        <div class="scroll-content">
+          <!-- Items -->
+          <div style="display:flex;flex-direction:column;gap:1px;background:#2a2a2a;">
+            <div style="background:#1c1c1e;padding:14px;display:flex;gap:12px;align-items:center;">
+              <div style="width:22px;height:22px;border-radius:11px;background:#30D158;display:flex;align-items:center;justify-content:center;font-size:12px;color:#000;font-weight:700;">✓</div>
+              <div style="flex:1;"><div style="font-size:14px;font-weight:600;">Oatly Oat Milk 1L</div><div style="font-size:12px;color:#888;margin-top:1px;">Dairy · No Frills</div></div>
+              <div style="text-align:right;"><div style="font-size:15px;font-weight:700;">$3.49</div><div style="font-size:11px;color:#888;">×1</div></div>
+            </div>
+            <div style="background:#1c1c1e;padding:14px;display:flex;gap:12px;align-items:center;">
+              <div style="width:22px;height:22px;border-radius:11px;background:#30D158;display:flex;align-items:center;justify-content:center;font-size:12px;color:#000;font-weight:700;">✓</div>
+              <div style="flex:1;"><div style="font-size:14px;font-weight:600;">Eggs Large 12pk</div><div style="font-size:12px;color:#888;margin-top:1px;">Dairy · No Frills</div></div>
+              <div style="text-align:right;"><div style="font-size:15px;font-weight:700;">$5.49</div><div style="font-size:11px;color:#888;">×2</div></div>
+            </div>
+            <div style="background:#1c1c1e;padding:14px;display:flex;gap:12px;align-items:center;">
+              <div style="width:22px;height:22px;border-radius:11px;background:#30D158;display:flex;align-items:center;justify-content:center;font-size:12px;color:#000;font-weight:700;">✓</div>
+              <div style="flex:1;"><div style="font-size:14px;font-weight:600;">Chicken Breast 1kg</div><div style="font-size:12px;color:#888;margin-top:1px;">Meat · No Frills</div></div>
+              <div style="text-align:right;"><div style="font-size:15px;font-weight:700;">$12.99</div><div style="font-size:11px;color:#888;">×1</div></div>
+            </div>
+            <div style="background:#1c1c1e;padding:14px;display:flex;gap:12px;align-items:center;">
+              <div style="width:22px;height:22px;border-radius:11px;background:#2a2a2a;border:2px solid #3a3a3c;display:flex;align-items:center;justify-content:center;"></div>
+              <div style="flex:1;"><div style="font-size:14px;font-weight:600;color:#888;">LB BAKERY ITEM</div><div style="display:inline-flex;align-items:center;gap:4px;background:rgba(255,159,10,0.15);padding:2px 7px;border-radius:6px;margin-top:3px;"><span style="font-size:11px;color:#FF9F0A;font-weight:600;">Needs review</span></div></div>
+              <div style="text-align:right;"><div style="font-size:15px;font-weight:700;">$4.49</div></div>
+            </div>
+          </div>
+        </div>
+        <!-- Footer -->
+        <div style="border-top:1px solid #2a2a2a;padding:12px 16px 32px;">
+          <div style="display:flex;justify-content:space-between;font-size:13px;color:#888;margin-bottom:12px;">
+            <span>7 matched · 1 needs review</span><span style="color:#30D158;">Prices saved ✓</span>
+          </div>
+          <div style="display:flex;gap:10px;">
+            <button class="btn-secondary" style="flex:1;" onclick="showScreen('home-list')">Discard</button>
+            <button class="btn-primary" style="flex:2;" onclick="showScreen('success')">Confirm & Save</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- SUCCESS SHEET -->
+      <div class="screen" id="screen-success">
+        <div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;text-align:center;gap:20px;">
+          <div style="width:80px;height:80px;background:linear-gradient(135deg,#30D158,#25a344);border-radius:40px;display:flex;align-items:center;justify-content:center;font-size:36px;box-shadow:0 8px 32px rgba(48,209,88,0.4);">✓</div>
+          <div><div style="font-size:26px;font-weight:700;margin-bottom:8px;">Receipt saved!</div><div style="font-size:16px;color:#888;">7 items added to your price history</div></div>
+          <!-- Achievement pills -->
+          <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center;">
+            <div class="pill pill-green">🏷️ 2 new deals found</div>
+            <div class="pill pill-blue">📦 3 items tracked</div>
+            <div class="pill pill-orange">📊 Prices updated</div>
+            <div class="pill pill-green">💰 Saved $3.50 vs avg</div>
+          </div>
+          <!-- What happens next -->
+          <div style="background:#1c1c1e;border-radius:14px;padding:16px;width:100%;text-align:left;">
+            <div style="font-size:13px;color:#888;margin-bottom:10px;">What happens next</div>
+            <div style="font-size:14px;line-height:1.6;">SmartCart will alert you when <strong>Oatly Oat Milk</strong> or <strong>Eggs</strong> hit a price below today's — timed to when you'll likely need them.</div>
+          </div>
+        </div>
+        <div style="padding:16px 24px 48px;display:flex;flex-direction:column;gap:10px;">
+          <button class="btn-primary" onclick="showScreen('home-list')">Back to Smart List</button>
+          <button class="btn-text" onclick="showScreen('review')">Review items</button>
+        </div>
+      </div>
+
+      <!-- ITEM DETAIL -->
+      <div class="screen" id="screen-item-detail">
+        <div class="status-bar"><span class="status-time">9:41</span><span class="status-icons">●●● 100%</span></div>
+        <div class="nav-bar" style="padding:4px 16px 8px;">
+          <button style="background:none;border:none;color:#30D158;font-size:16px;cursor:pointer;" onclick="showScreen('home-list')">‹ Home</button>
+          <div></div>
+        </div>
+        <div class="scroll-content">
+          <!-- Hero -->
+          <div style="padding:0 20px 16px;text-align:center;">
+            <div style="width:80px;height:80px;background:#1e2a1e;border-radius:20px;display:flex;align-items:center;justify-content:center;font-size:44px;margin:0 auto 12px;">🥛</div>
+            <div style="display:flex;gap:8px;justify-content:center;margin-bottom:8px;">
+              <span class="pill pill-red">📉 All-Time Low</span>
+            </div>
+            <div style="font-size:22px;font-weight:700;">Oatly Oat Milk 1L</div>
+          </div>
+          <!-- Sale price banner -->
+          <div style="margin:0 16px 12px;background:linear-gradient(135deg,#1a2a1a,#0d1a0d);border-radius:14px;padding:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+              <div>
+                <div style="font-size:32px;font-weight:800;color:#30D158;font-variant-numeric:tabular-nums;">$3.49</div>
+                <div style="display:flex;gap:8px;align-items:center;margin-top:4px;">
+                  <span style="font-size:14px;color:#888;text-decoration:line-through;">$4.99</span>
+                  <span class="pill pill-green" style="font-size:10px;">−30%</span>
+                </div>
+              </div>
+              <div style="text-align:right;">
+                <span class="store-badge store-nofrills">No Frills</span>
+                <div style="font-size:12px;color:#888;margin-top:4px;">Expires May 21</div>
+                <div style="font-size:12px;color:#30D158;margin-top:2px;">✓ Your Low</div>
+              </div>
+            </div>
+          </div>
+          <!-- Price chart -->
+          <div class="card"><div class="card-content">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+              <div style="font-size:14px;font-weight:600;">Price History</div>
+              <div style="display:flex;gap:6px;">
+                <div style="font-size:11px;color:#888;padding:3px 8px;background:#2a2a2a;border-radius:6px;cursor:pointer;">30d</div>
+                <div style="font-size:11px;color:#30D158;padding:3px 8px;background:#1a2a1a;border-radius:6px;cursor:pointer;">90d</div>
+                <div style="font-size:11px;color:#888;padding:3px 8px;background:#2a2a2a;border-radius:6px;cursor:pointer;">1yr</div>
+              </div>
+            </div>
+            <!-- SVG chart -->
+            <svg viewBox="0 0 320 100" style="width:100%;height:100px;">
+              <path d="M0,60 L50,55 L90,65 L130,50 L170,58 L210,40 L250,35 L290,20 L320,15" fill="none" stroke="#30D158" stroke-width="2" opacity="0.3"/>
+              <path d="M0,60 L50,55 L90,65 L130,50 L170,58 L210,40 L250,35 L290,20 L320,15" fill="none" stroke="#30D158" stroke-width="2"/>
+              <line x1="0" y1="50" x2="320" y2="50" stroke="#888" stroke-width="1" stroke-dasharray="4,4" opacity="0.5"/>
+              <circle cx="320" cy="15" r="5" fill="#30D158"/>
+              <text x="280" y="12" font-size="9" fill="#30D158">$3.49</text>
+              <text x="60" y="48" font-size="8" fill="#888">Avg $4.60</text>
+            </svg>
+          </div></div>
+          <!-- Smart Insights grid -->
+          <div class="section-header">Smart Insights</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:0 16px 10px;">
+            <div style="background:#1c1c1e;border-radius:12px;padding:14px;"><div style="font-size:11px;color:#888;margin-bottom:4px;">Avg Cycle</div><div style="font-size:20px;font-weight:700;">14 days</div></div>
+            <div style="background:#1c1c1e;border-radius:12px;padding:14px;"><div style="font-size:11px;color:#888;margin-bottom:4px;">You Usually Pay</div><div style="font-size:20px;font-weight:700;">$4.60</div></div>
+            <div style="background:#1c1c1e;border-radius:12px;padding:14px;"><div style="font-size:11px;color:#888;margin-bottom:4px;">Sale Frequency</div><div style="font-size:20px;font-weight:700;">~3×/mo</div></div>
+            <div style="background:#1c1c1e;border-radius:12px;padding:14px;"><div style="font-size:11px;color:#888;margin-bottom:4px;">Stock Up Qty</div><div style="font-size:20px;font-weight:700;">2 units</div></div>
+          </div>
+          <!-- Replenishment -->
+          <div class="section-header">Replenishment</div>
+          <div class="card"><div class="card-content">
+            <div style="font-size:13px;color:#888;margin-bottom:8px;">Last purchased 12 days ago</div>
+            <div class="progress-bar" style="margin-bottom:8px;"><div class="progress-fill" style="width:85%;background:#FF9F0A;"></div></div>
+            <div style="font-size:13px;color:#FF9F0A;">⏱ Due to restock in ~2 days</div>
+          </div></div>
+          <!-- Current prices nearby -->
+          <div class="section-header">Current Prices Nearby</div>
+          <div class="card"><div class="card-content" style="display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;align-items:center;gap:10px;"><span class="store-badge store-nofrills">No Frills</span><div style="flex:1;font-size:14px;font-weight:600;">$3.49</div><span class="pill pill-green" style="font-size:10px;">BEST</span><div style="font-size:12px;color:#888;">Updated 2h ago</div></div>
+            <div style="height:1px;background:#2a2a2a;"></div>
+            <div style="display:flex;align-items:center;gap:10px;"><span class="store-badge store-metro">Metro</span><div style="flex:1;font-size:14px;font-weight:600;">$4.49</div><div style="font-size:12px;color:#888;">Updated 4h ago</div></div>
+            <div style="height:1px;background:#2a2a2a;"></div>
+            <div style="display:flex;align-items:center;gap:10px;"><span class="store-badge store-loblaws">Loblaws</span><div style="flex:1;font-size:14px;font-weight:600;">$4.99</div><div style="font-size:12px;color:#888;">Updated 1d ago</div></div>
+          </div></div>
+          <!-- Purchase history -->
+          <div class="section-header">Purchase History</div>
+          <div class="card"><div class="card-content" style="display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;"><div><div style="font-size:14px;font-weight:600;">No Frills · May 3</div><div style="font-size:12px;color:#888;">Receipt #1042</div></div><div style="text-align:right;"><div style="font-size:14px;font-weight:700;">$4.99</div><div style="font-size:11px;color:#888;">avg</div></div></div>
+            <div style="height:1px;background:#2a2a2a;"></div>
+            <div style="display:flex;justify-content:space-between;align-items:center;"><div><div style="font-size:14px;font-weight:600;">Metro · Apr 19</div><div style="font-size:12px;color:#888;">Receipt #1038</div></div><div style="text-align:right;"><div style="font-size:14px;font-weight:700;color:#30D158;">$3.99</div><div style="font-size:11px;color:#30D158;">↓ below avg</div></div></div>
+          </div></div>
+          <div style="height:100px;"></div>
+        </div>
+        <!-- Sticky footer -->
+        <div style="position:absolute;bottom:0;left:0;right:0;padding:12px 16px 32px;background:rgba(0,0,0,0.9);backdrop-filter:blur(20px);border-top:1px solid #2a2a2a;display:flex;gap:10px;">
+          <button class="btn-secondary" style="flex:1;font-size:14px;">🔔 Set Alert</button>
+          <button class="btn-primary" style="flex:1;font-size:14px;" onclick="showScreen('list-items')">+ Add to List</button>
+        </div>
+      </div>
+
+      <!-- SETTINGS -->
+      <div class="screen" id="screen-settings">
+        <div class="status-bar"><span class="status-time">9:41</span><span class="status-icons">●●● 100%</span></div>
+        <div class="nav-bar"><button style="background:none;border:none;color:#30D158;font-size:16px;cursor:pointer;" onclick="showScreen('home-list')">‹ Home</button><div class="nav-title">Settings</div><div style="width:60px;"></div></div>
+        <div class="scroll-content">
+          <!-- Notifications -->
+          <div class="section-header">Notifications</div>
+          <div class="card"><div class="card-content" style="display:flex;flex-direction:column;gap:0;">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:4px 0 12px;border-bottom:1px solid #2a2a2a;">
+              <div><div style="font-size:15px;font-weight:500;">Price Alerts</div><div style="font-size:12px;color:#888;margin-top:1px;">When items hit historical lows</div></div>
+              <div class="toggle"></div>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0 12px;border-bottom:1px solid #2a2a2a;">
+              <div><div style="font-size:15px;font-weight:500;">Replenishment Nudges</div><div style="font-size:12px;color:#888;margin-top:1px;">When you're likely running out</div></div>
+              <div class="toggle"></div>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0 0;">
+              <div><div style="font-size:15px;font-weight:500;">Weekly Summary</div><div style="font-size:12px;color:#888;margin-top:1px;">One recap each Sunday</div></div>
+              <div class="toggle off"></div>
+            </div>
+          </div></div>
+          <!-- Stores -->
+          <div class="section-header">Your Stores</div>
+          <div class="card"><div class="card-content">
+            <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+              <span class="store-badge store-nofrills" style="padding:5px 10px;font-size:11px;">No Frills ✕</span>
+              <span class="store-badge store-metro" style="padding:5px 10px;font-size:11px;">Metro ✕</span>
+            </div>
+            <button style="background:none;border:none;color:#30D158;font-size:14px;cursor:pointer;">+ Add store</button>
+          </div></div>
+          <!-- Location -->
+          <div class="section-header">Location & Flyers</div>
+          <div class="card"><div class="card-content">
+            <div style="font-size:13px;color:#888;margin-bottom:6px;">Postal Code</div>
+            <div style="font-size:20px;font-weight:600;letter-spacing:4px;font-family:monospace;margin-bottom:4px;">M5V 3A8</div>
+            <div style="font-size:13px;color:#30D158;">📍 Toronto, ON</div>
+            <button style="background:none;border:none;color:#30D158;font-size:13px;cursor:pointer;margin-top:10px;">Change postal code</button>
+          </div></div>
+          <!-- Price intelligence -->
+          <div class="section-header">Price Intelligence</div>
+          <div class="card"><div class="card-content">
+            <div style="font-size:13px;color:#888;margin-bottom:10px;">Replenishment calculation method</div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <div style="display:flex;align-items:center;gap:10px;padding:10px;background:#1a2a1a;border-radius:10px;border:1.5px solid #30D158;"><div style="width:16px;height:16px;border-radius:8px;background:#30D158;"></div><div style="font-size:14px;">Median of last 6</div></div>
+              <div style="display:flex;align-items:center;gap:10px;padding:10px;background:#2c2c2e;border-radius:10px;"><div style="width:16px;height:16px;border-radius:8px;border:2px solid #3a3a3c;"></div><div style="font-size:14px;">Average of last 6</div></div>
+              <div style="display:flex;align-items:center;gap:10px;padding:10px;background:#2c2c2e;border-radius:10px;"><div style="width:16px;height:16px;border-radius:8px;border:2px solid #3a3a3c;"></div><div style="font-size:14px;">Most recent only</div></div>
+            </div>
+          </div></div>
+          <div style="padding:16px 16px 40px;display:flex;flex-direction:column;gap:10px;">
+            <button class="btn-primary">Save Changes</button>
+            <button class="btn-secondary">Reset to Defaults</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /phone-screen -->
+  </div><!-- /phone -->
+</div><!-- /canvas -->
+
+<script>
+function showScreen(id) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.sidebar-item').forEach(s => s.classList.remove('active'));
+  const screen = document.getElementById('screen-' + id);
+  if (screen) screen.classList.add('active');
+  const items = document.querySelectorAll('.sidebar-item');
+  items.forEach(item => {
+    if (item.getAttribute('onclick') && item.getAttribute('onclick').includes("'" + id + "'")) {
+      item.classList.add('active');
+    }
+  });
+}
+</script>
+</body>
+</html>
