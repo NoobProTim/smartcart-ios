@@ -8,40 +8,56 @@
 //   - Inline name correction field (tap to edit)
 //   - Confirm CTA: saves selected items to user_items + purchase_history
 //
-// P0-2 fix context: ReceiptScannerView sets showError=true if parsedItems is empty;
-// this view handles the non-empty case.
+// Sprint 3: saveComplete state now shows per-item "Saved $X vs your avg"
+// copy for any item where the purchase price was below the user's rolling
+// average. Falls back gracefully to the plain confirmation if no prior
+// purchase history exists for a given item.
 
 import SwiftUI
 import Combine
+
+// MARK: - SavingsSummaryRow
+// Value type: one item's name + how much was saved vs the rolling average.
+// Used to populate the success screen achievement rows.
+struct SavingsSummaryRow: Identifiable {
+    let id = UUID()
+    let itemName: String
+    let savedAmount: Double   // positive = paid less than average
+}
 
 // MARK: - ReceiptReviewViewModel
 
 @MainActor
 final class ReceiptReviewViewModel: ObservableObject {
 
-    // Mutable wrappers around the parsed items so the user can edit names / toggle inclusion.
     @Published var editableItems: [EditableReceiptItem]
     @Published var isSaving = false
     @Published var saveComplete = false
     @Published var saveError: String? = nil
+    // Populated after save — rows where purchase price < rolling average.
+    // Empty if no prior history exists for any saved item.
+    @Published var savingsRows: [SavingsSummaryRow] = []
 
     private let storeID: Int64?
 
     init(items: [ParsedReceiptItem], storeID: Int64? = nil) {
-        // Start with all items included. User can uncheck any.
         self.editableItems = items.map { EditableReceiptItem(source: $0) }
         self.storeID = storeID
     }
 
-    /// Returns only the items the user has checked for inclusion.
     var selectedItems: [EditableReceiptItem] { editableItems.filter { $0.isIncluded } }
 
     var subtotal: Double {
         selectedItems.compactMap { $0.source.parsedPrice }.reduce(0, +)
     }
 
-    /// Saves all selected items to items + user_items + purchase_history.
-    /// Uses the edited name if the user changed it; otherwise uses the OCR name.
+    /// Total savings shown on the success screen.
+    var totalSaved: Double { savingsRows.reduce(0) { $0 + $1.savedAmount } }
+
+    // MARK: confirmAndSave(dismissAction:)
+    // Saves all selected items to items + user_items + purchase_history.
+    // After saving, computes per-item savings vs rolling average and
+    // populates savingsRows so the success screen can show them.
     func confirmAndSave(dismissAction: @escaping () -> Void) {
         guard !selectedItems.isEmpty else {
             saveError = "Select at least one item to add."
@@ -52,47 +68,54 @@ final class ReceiptReviewViewModel: ObservableObject {
 
         Task {
             let today = DateHelper.todayString()
+            var computed: [SavingsSummaryRow] = []
 
             for editable in selectedItems {
                 let rawName = editable.editedName.isEmpty ? editable.source.normalisedName : editable.editedName
-                // Normalise the name in case the user typed it with mixed case
                 let normalisedName = NameNormaliser.normalise(rawName)
                 let displayName = rawName.trimmingCharacters(in: .whitespaces)
                     .split(separator: " ").map { $0.capitalized }.joined(separator: " ")
 
-                // Find or create the item in the items table
                 let itemID = DatabaseManager.shared.findItem(normalisedName: normalisedName)
                     ?? DatabaseManager.shared.insertItem(normalisedName: normalisedName, displayName: displayName)
 
-                // Add to user's watchlist (INSERT OR IGNORE — safe to call if already present)
                 DatabaseManager.shared.addToWatchlist(itemID: itemID)
 
-                // Write a purchase_history row for this receipt line
                 if let price = editable.source.parsedPrice {
+                    // Read the rolling average BEFORE writing this purchase,
+                    // so we compare against historical data only.
+                    let avgBefore = DatabaseManager.shared.averagePrice(for: itemID)
+
                     DatabaseManager.shared.insertPurchase(
                         itemID: itemID, storeID: storeID, price: price, date: today, source: "receipt")
+
+                    // If we have a prior average and we paid less, record a savings row.
+                    if let avg = avgBefore, price < avg {
+                        computed.append(SavingsSummaryRow(
+                            itemName: displayName,
+                            savedAmount: avg - price
+                        ))
+                    }
                 }
 
-                // Mark as purchased on the grocery list if it was there
                 DatabaseManager.shared.markGroceryListItemPurchased(itemID: itemID)
             }
 
+            savingsRows = computed
             isSaving = false
             saveComplete = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { dismissAction() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { dismissAction() }
         }
     }
 }
 
-// Mutable wrapper for one ParsedReceiptItem so it can be toggled and edited in the list.
+// Mutable wrapper for one ParsedReceiptItem so it can be toggled and edited.
 struct EditableReceiptItem: Identifiable {
     let id = UUID()
     let source: ParsedReceiptItem
     var isIncluded: Bool = true
-    // editedName: starts empty (meaning "use source name"); non-empty = user correction
     var editedName: String = ""
 
-    // The name to display in the text field: edited name if set, else the OCR name.
     var displayedName: String {
         editedName.isEmpty ? source.normalisedName : editedName
     }
@@ -102,7 +125,7 @@ struct EditableReceiptItem: Identifiable {
 
 struct ReceiptReviewView: View {
     @StateObject private var vm: ReceiptReviewViewModel
-    @Binding var isPresented: Bool // set to false to dismiss the whole scan flow
+    @Binding var isPresented: Bool
     let storeName: String?
 
     init(items: [ParsedReceiptItem], storeID: Int64? = nil, storeName: String? = nil, isPresented: Binding<Bool>) {
@@ -115,25 +138,7 @@ struct ReceiptReviewView: View {
         NavigationStack {
             Group {
                 if vm.saveComplete {
-                    // Post-save celebration state
-                    VStack(spacing: 20) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 56)).foregroundStyle(Color.accentColor)
-                        Text("\(vm.selectedItems.count) item\(vm.selectedItems.count == 1 ? "" : "s") added")
-                            .font(.system(size: 20, weight: .bold))
-                        Text("SmartCart is tracking them for you.")
-                            .font(.system(size: 15)).foregroundStyle(.secondary)
-                        // Achievement pills
-                        HStack(spacing: 8) {
-                            AchievementPill(icon: "tag.fill", label: "\(vm.selectedItems.count) tracked", color: .accentColor)
-                            if vm.subtotal > 0 {
-                                AchievementPill(icon: "dollarsign.circle.fill",
-                                                label: String(format: "$%.2f", vm.subtotal),
-                                                color: .green)
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    successView
                 } else {
                     reviewList
                 }
@@ -150,10 +155,104 @@ struct ReceiptReviewView: View {
         .sensoryFeedback(.success, trigger: vm.saveComplete)
     }
 
-    // MARK: Review list
+    // MARK: - successView
+    // Shown after confirmAndSave completes. If any items were bought below
+    // their rolling average, a green "You saved" headline and per-item rows
+    // are shown. If no prior history exists, the plain confirmation is shown.
+    private var successView: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                Spacer().frame(height: 20)
+
+                // Big checkmark
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 64))
+                    .foregroundStyle(Color.accentColor)
+
+                // Headline — personalised if we have savings data
+                if vm.totalSaved > 0 {
+                    VStack(spacing: 4) {
+                        Text("Great shop!")
+                            .font(.system(size: 22, weight: .bold))
+                        Text("You saved \(vm.totalSaved, format: .currency(code: "CAD")) vs your averages")
+                            .font(.system(size: 15))
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                    }
+                } else {
+                    VStack(spacing: 4) {
+                        Text("\(vm.selectedItems.count) item\(vm.selectedItems.count == 1 ? "" : "s") added")
+                            .font(.system(size: 22, weight: .bold))
+                        Text("SmartCart is tracking them for you.")
+                            .font(.system(size: 15))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                // Achievement pills row
+                HStack(spacing: 8) {
+                    AchievementPill(
+                        icon: "tag.fill",
+                        label: "\(vm.selectedItems.count) tracked",
+                        color: .accentColor
+                    )
+                    if vm.subtotal > 0 {
+                        AchievementPill(
+                            icon: "dollarsign.circle.fill",
+                            label: String(format: "$%.2f receipt", vm.subtotal),
+                            color: .green
+                        )
+                    }
+                }
+
+                // Per-item savings breakdown — only shown if savings exist.
+                // Each row tells the user exactly which item they bought well.
+                if !vm.savingsRows.isEmpty {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("Savings breakdown")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .textCase(.uppercase)
+                            .kerning(0.4)
+                            .padding(.horizontal, 16)
+                            .padding(.bottom, 8)
+
+                        VStack(spacing: 0) {
+                            ForEach(vm.savingsRows) { row in
+                                HStack {
+                                    Text(row.itemName)
+                                        .font(.system(size: 15))
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                    Text("-\(row.savedAmount, format: .currency(code: "CAD")) vs avg")
+                                        .font(.system(size: 14, weight: .semibold))
+                                        .foregroundStyle(.green)
+                                        .monospacedDigit()
+                                }
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 10)
+                                if row.id != vm.savingsRows.last?.id {
+                                    Divider().padding(.leading, 16)
+                                }
+                            }
+                        }
+                        .background(Color(.secondarySystemGroupedBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 14))
+                        .padding(.horizontal, 16)
+                    }
+                }
+
+                Spacer().frame(height: 20)
+            }
+            .frame(maxWidth: .infinity)
+        }
+        .background(Color(.systemGroupedBackground))
+    }
+
+    // MARK: - reviewList
     private var reviewList: some View {
         VStack(spacing: 0) {
-            // Totals header
+            // Totals header bar
             HStack(spacing: 0) {
                 VStack(alignment: .leading, spacing: 2) {
                     if let name = storeName {
@@ -180,7 +279,7 @@ struct ReceiptReviewView: View {
             .padding(.vertical, 10)
             .background(Color(.secondarySystemBackground))
 
-            // Select all row
+            // Select all toggle
             HStack {
                 Text("Items")
                     .font(.system(size: 13, weight: .medium)).foregroundStyle(.secondary)
@@ -201,7 +300,6 @@ struct ReceiptReviewView: View {
             }
             .listStyle(.plain)
 
-            // Error message
             if let err = vm.saveError {
                 Text(err).font(.system(size: 13)).foregroundStyle(.red)
                     .padding(.horizontal, 16).padding(.top, 4)
@@ -233,14 +331,12 @@ struct ReceiptReviewView: View {
 }
 
 // MARK: - ReceiptItemRow
-// One editable row. Checkbox, amber badge for low confidence, inline name editor.
+// One editable row. Checkbox, amber confidence badge, inline name editor.
 struct ReceiptItemRow: View {
     @Binding var editable: EditableReceiptItem
-    @State private var isEditing = false
 
     var body: some View {
         HStack(spacing: 12) {
-            // Checkbox — 44pt touch target via frame + contentShape
             Button(action: { editable.isIncluded.toggle() }) {
                 Image(systemName: editable.isIncluded ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 22))
@@ -252,7 +348,6 @@ struct ReceiptItemRow: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
-                    // Inline name field: tap to correct OCR mistakes
                     TextField("Item name", text: Binding(
                         get: { editable.displayedName },
                         set: { editable.editedName = $0 }
@@ -260,7 +355,6 @@ struct ReceiptItemRow: View {
                     .font(.system(size: 15))
                     .foregroundStyle(editable.isIncluded ? .primary : .secondary)
 
-                    // Amber badge: OCR confidence below .high
                     if editable.source.confidence != .high {
                         Text(editable.source.confidence == .low ? "Low confidence" : "Review")
                             .font(.system(size: 10, weight: .semibold))

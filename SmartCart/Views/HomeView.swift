@@ -6,17 +6,14 @@
 // alerted items, then alphabetical).
 //
 // Also contains:
-//   - "Today's Deals" section — all active sales regardless of alert cap
+//   - Segment picker: "My List" | "On Sale Now"
+//   - "Today's Deals" section in My List tab — active sales on watchlisted items
 //   - Pull-to-refresh wired to BackgroundSyncManager with staleness gate
 //   - Last-updated subtitle under the nav title
 //   - Notification permission denial banner (amber, safeAreaInset — not modal)
 //   - Empty state CTA when Smart List is empty
-//   - Deep-link handler for notification taps (P1-6)
-//
-// UPDATED IN TASK #3 (P1-7):
-// Pull-to-refresh now calls BackgroundSyncManager.manualRefresh() and
-// handles the RefreshResult enum to show "Prices updated just now" or
-// "Last updated X hours ago" as the nav subtitle.
+//   - Deep-link handler for notification taps
+//   - Scanner FAB — opens MultiShotCaptureView (Sprint 3: re-enabled)
 
 import SwiftUI
 import UserNotifications
@@ -27,13 +24,13 @@ struct HomeView: View {
     @EnvironmentObject private var notificationRouter: NotificationRouter
     @State private var deepLinkedItemID: Int64? = nil
     @State private var showNotificationBanner = false
-    @State private var showScanner = false
+    @State private var showScanner = false        // Sprint 3: controls scanner sheet
     @State private var showAddItem = false
     @State private var newItemName = ""
     @State private var refreshSubtitle: String? = nil
     @State private var isRefreshing = false
     @State private var groceryAddedTrigger = 0
-    @State private var activeSegment: Int = 0  // 0 = My List, 1 = On Sale Now
+    @State private var activeSegment: Int = 0     // 0 = My List, 1 = On Sale Now
 
     var body: some View {
         NavigationStack {
@@ -49,16 +46,18 @@ struct HomeView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack(spacing: 16) {
+                        // Add item manually
                         Button { showAddItem = true } label: {
                             Image(systemName: "plus")
                         }
                         .accessibilityLabel("Add item manually")
-                        // Scanner button commented out — receipt scanner on hold
-                        // Button { showScanner = true } label: {
-                        //     Image(systemName: "camera.viewfinder")
-                        //         .font(.system(size: 18))
-                        // }
-                        // .accessibilityLabel("Scan a receipt")
+
+                        // Sprint 3: scanner FAB re-enabled
+                        Button { showScanner = true } label: {
+                            Image(systemName: "camera.viewfinder")
+                                .font(.system(size: 18))
+                        }
+                        .accessibilityLabel("Scan a receipt")
                     }
                 }
             }
@@ -86,10 +85,11 @@ struct HomeView: View {
                 deepLinkDestination
             }
         }
-        // Scanner sheet commented out — receipt scanner on hold
-        // .sheet(isPresented: $showScanner, onDismiss: { viewModel.load() }) {
-        //     MultiShotCaptureView()
-        // }
+        // Sprint 3: scanner sheet re-enabled. Reloads list after dismissal
+        // so any newly scanned items appear immediately.
+        .sheet(isPresented: $showScanner, onDismiss: { viewModel.load() }) {
+            MultiShotCaptureView()
+        }
         .sheet(isPresented: $showAddItem) {
             addItemSheet
         }
@@ -109,10 +109,12 @@ struct HomeView: View {
     }
 
     // MARK: - listContent
+    // Hosts the deal-count alert banner, the segment picker, and switches
+    // between myListContent and onSaleContent based on activeSegment.
     @ViewBuilder
     private var listContent: some View {
         VStack(spacing: 0) {
-            // Alert banner
+            // Amber deal alert banner — visible on both segments
             if !viewModel.todaysDeals.isEmpty {
                 HStack(spacing: 6) {
                     Image(systemName: "tag.fill")
@@ -130,7 +132,7 @@ struct HomeView: View {
                 .background(Color.accentColor.opacity(0.08))
             }
 
-            // Segment picker
+            // Segment picker: My List | On Sale Now
             Picker("", selection: $activeSegment) {
                 Text("My List").tag(0)
                 Text("On Sale Now").tag(1)
@@ -148,10 +150,12 @@ struct HomeView: View {
         }
     }
 
+    // MARK: - myListContent
+    // Savings card → Grocery List → Today's Deals → Your Items
     @ViewBuilder
     private var myListContent: some View {
         List {
-            // Savings card
+            // Annual savings card — only shown when there are verified savings to display
             if viewModel.annualSavings > 0 {
                 Section {
                     HStack(spacing: 16) {
@@ -189,7 +193,7 @@ struct HomeView: View {
                 }
             }
 
-            // Grocery list
+            // Grocery list — items added from Flyers or manually
             if !viewModel.groceryList.isEmpty {
                 Section {
                     ForEach(viewModel.groceryList) { entry in
@@ -224,6 +228,7 @@ struct HomeView: View {
                 }
             }
 
+            // Today's Deals — active sales on items the user already tracks
             if !viewModel.todaysDeals.isEmpty {
                 Section {
                     ForEach(viewModel.todaysDeals) { item in
@@ -253,6 +258,7 @@ struct HomeView: View {
                 }
             }
 
+            // Main Smart List — all watched items sorted by urgency
             Section {
                 ForEach(viewModel.items) { item in
                     NavigationLink(destination: ItemDetailView(itemID: item.itemID)) {
@@ -275,6 +281,9 @@ struct HomeView: View {
         .animation(.spring(duration: 0.35, bounce: 0.15), value: viewModel.annualSavings > 0)
     }
 
+    // MARK: - onSaleContent
+    // Second segment: shows all active deals on the user's watchlist items.
+    // Empty state shows a tag icon and message instead of a blank screen.
     @ViewBuilder
     private var onSaleContent: some View {
         if viewModel.todaysDeals.isEmpty {
@@ -333,6 +342,7 @@ struct HomeView: View {
     }
 
     // MARK: - performPullToRefresh()
+    // Calls BackgroundSyncManager and updates the nav subtitle with the result.
     private func performPullToRefresh() async {
         let result = await BackgroundSyncManager.shared.manualRefresh()
         await MainActor.run {
@@ -349,6 +359,8 @@ struct HomeView: View {
     }
 
     // MARK: - updateRefreshSubtitle()
+    // Reads the last_price_refresh timestamp from DB and formats it as a
+    // human-readable string for the navigation subtitle on appear.
     private func updateRefreshSubtitle() {
         let lastRefreshString = DatabaseManager.shared.getSetting(key: "last_price_refresh") ?? ""
         guard let lastRefreshDate = ISO8601DateFormatter().date(from: lastRefreshString) else {
@@ -374,6 +386,7 @@ struct HomeView: View {
     }
 
     // MARK: - checkNotificationPermission()
+    // Shows the amber banner in safeAreaInset if notifications are denied.
     private func checkNotificationPermission() {
         UNUserNotificationCenter.current().getNotificationSettings { settings in
             DispatchQueue.main.async {
@@ -382,6 +395,7 @@ struct HomeView: View {
         }
     }
 
+    // MARK: - greetingText
     private var greetingText: String {
         let hour = Calendar.current.component(.hour, from: Date())
         switch hour {
@@ -431,11 +445,14 @@ extension HomeView {
 }
 
 // MARK: - SmartListRowView
+// One row in the Smart List. Shows urgency dot, item name, alert badge,
+// restock date subtitle, and last-purchased price on the trailing side.
 struct SmartListRowView: View {
     let item: UserItem
 
     var body: some View {
         HStack(spacing: 12) {
+            // Blue urgency dot — visible only when item is in restock window
             Circle()
                 .fill(item.isInRestockWindow ? Color.accentColor : Color.clear)
                 .frame(width: 8, height: 8)
@@ -487,6 +504,8 @@ struct SmartListRowView: View {
 }
 
 // MARK: - DealRowView
+// Reusable row for showing a FlyerSale on any screen.
+// Shows store name (or fallback), historical-low badge, sale price, and expiry.
 struct DealRowView: View {
     let deal: FlyerSale
     var itemName: String = ""
