@@ -69,6 +69,10 @@
 		327FAF952FB5A10000FC6EB7 /* GroceryListViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF942FB5A10000FC6EB7 /* GroceryListViewModel.swift */; };
 		327FAF972FB5A10000FC6EB7 /* GroceryListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF962FB5A10000FC6EB7 /* GroceryListView.swift */; };
 		327FAF992FB5A10000FC6EB7 /* FlyersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAF982FB5A10000FC6EB7 /* FlyersView.swift */; };
+		327FAFAB2FB5B00000FC6EB7 /* InsightsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAFAA2FB5B00000FC6EB7 /* InsightsView.swift */; };
+		327FAFAD2FB5B00000FC6EB7 /* InsightsViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAFAC2FB5B00000FC6EB7 /* InsightsViewModel.swift */; };
+		327FAFAF2FB5B00000FC6EB7 /* FlyerBrowserView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAFAE2FB5B00000FC6EB7 /* FlyerBrowserView.swift */; };
+		327FAFB12FB5B00000FC6EB7 /* DatabaseManager+Insights.swift in Sources */ = {isa = PBXBuildFile; fileRef = 327FAFB02FB5B00000FC6EB7 /* DatabaseManager+Insights.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -135,6 +139,10 @@
 		327FAF942FB5A10000FC6EB7 /* GroceryListViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroceryListViewModel.swift; sourceTree = "<group>"; };
 		327FAF962FB5A10000FC6EB7 /* GroceryListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroceryListView.swift; sourceTree = "<group>"; };
 		327FAF982FB5A10000FC6EB7 /* FlyersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlyersView.swift; sourceTree = "<group>"; };
+		327FAFAA2FB5B00000FC6EB7 /* InsightsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightsView.swift; sourceTree = "<group>"; };
+		327FAFAC2FB5B00000FC6EB7 /* InsightsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InsightsViewModel.swift; sourceTree = "<group>"; };
+		327FAFAE2FB5B00000FC6EB7 /* FlyerBrowserView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlyerBrowserView.swift; sourceTree = "<group>"; };
+		327FAFB02FB5B00000FC6EB7 /* DatabaseManager+Insights.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "DatabaseManager+Insights.swift"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -202,6 +210,7 @@
 				327FAF052FB58DA200FC6EB7 /* DatabaseManager+PriceHistory.swift */,
 				327FAF062FB58DA200FC6EB7 /* DatabaseManager+Purchases.swift */,
 				327FAF092FB58DA200FC6EB7 /* DatabaseManager+GroceryList.swift */,
+				327FAFB02FB5B00000FC6EB7 /* DatabaseManager+Insights.swift */,
 				327FAF072FB58DA200FC6EB7 /* Schema.swift */,
 			);
 			path = Database;
@@ -269,6 +278,7 @@
 				327FAF2E2FB58DA200FC6EB7 /* SmartListViewModel.swift */,
 				327FAF922FB5A10000FC6EB7 /* FlyersViewModel.swift */,
 				327FAF942FB5A10000FC6EB7 /* GroceryListViewModel.swift */,
+				327FAFAC2FB5B00000FC6EB7 /* InsightsViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -295,6 +305,8 @@
 				327FAF3F2FB58DA200FC6EB7 /* SplashView.swift */,
 				327FAF962FB5A10000FC6EB7 /* GroceryListView.swift */,
 				327FAF982FB5A10000FC6EB7 /* FlyersView.swift */,
+				327FAFAA2FB5B00000FC6EB7 /* InsightsView.swift */,
+				327FAFAE2FB5B00000FC6EB7 /* FlyerBrowserView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -449,6 +461,10 @@
 				327FAF952FB5A10000FC6EB7 /* GroceryListViewModel.swift in Sources */,
 				327FAF972FB5A10000FC6EB7 /* GroceryListView.swift in Sources */,
 				327FAF992FB5A10000FC6EB7 /* FlyersView.swift in Sources */,
+				327FAFAB2FB5B00000FC6EB7 /* InsightsView.swift in Sources */,
+				327FAFAD2FB5B00000FC6EB7 /* InsightsViewModel.swift in Sources */,
+				327FAFAF2FB5B00000FC6EB7 /* FlyerBrowserView.swift in Sources */,
+				327FAFB12FB5B00000FC6EB7 /* DatabaseManager+Insights.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

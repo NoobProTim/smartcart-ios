@@ -20,6 +20,8 @@ import UserNotifications
 
 struct HomeView: View {
 
+    var onBrowseDealsTapped: (() -> Void)? = nil
+
     @StateObject private var viewModel = HomeViewModel()
     @EnvironmentObject private var notificationRouter: NotificationRouter
     @State private var deepLinkedItemID: Int64? = nil
@@ -37,8 +39,11 @@ struct HomeView: View {
             ZStack {
                 listContent
                 if viewModel.items.isEmpty {
-                    EmptyCTAView(onScanTapped: { showScanner = true })
-                        .transition(.opacity)
+                    NewUserEmptyStateView(
+                        onScanTapped: { showScanner = true },
+                        onBrowseDealsTapped: onBrowseDealsTapped
+                    )
+                    .transition(.opacity)
                 }
             }
             .navigationTitle(greetingText)
@@ -51,7 +56,6 @@ struct HomeView: View {
                             Image(systemName: "plus")
                         }
                         .accessibilityLabel("Add item manually")
-
                         // Sprint 3: scanner FAB re-enabled
                         Button { showScanner = true } label: {
                             Image(systemName: "camera.viewfinder")
@@ -441,6 +445,68 @@ extension HomeView {
         viewModel.addItem(nameDisplay: name)
         newItemName  = ""
         showAddItem = false
+    }
+}
+
+// MARK: - NewUserEmptyStateView
+struct NewUserEmptyStateView: View {
+    let onScanTapped: () -> Void
+    let onBrowseDealsTapped: (() -> Void)?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Spacer()
+            VStack(spacing: 24) {
+                Image(systemName: "cart.badge.plus")
+                    .font(.system(size: 56))
+                    .foregroundStyle(Color.accentColor)
+
+                VStack(spacing: 8) {
+                    Text("Welcome to SmartCart")
+                        .font(.system(size: 22, weight: .bold))
+                        .foregroundStyle(.primary)
+                    Text("Scan a grocery receipt to start tracking prices and get smarter shopping alerts.")
+                        .font(.system(size: 15))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 8)
+                }
+
+                VStack(spacing: 12) {
+                    Button(action: onScanTapped) {
+                        Label("Scan a Receipt", systemImage: "camera.viewfinder")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(Color.accentColor)
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                    }
+                    .accessibilityLabel("Scan a receipt to get started")
+
+                    if let onBrowseDealsTapped {
+                        Button(action: onBrowseDealsTapped) {
+                            Label("Browse This Week's Deals", systemImage: "tag")
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundStyle(Color.accentColor)
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 14)
+                                .background(Color.accentColor.opacity(0.10))
+                                .clipShape(RoundedRectangle(cornerRadius: 14))
+                        }
+                        .accessibilityLabel("Browse deals on the Flyers tab")
+                    }
+                }
+            }
+            .padding(28)
+            .background(Color(.secondarySystemGroupedBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 20))
+            .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
+            .padding(.horizontal, 24)
+            Spacer()
+            Spacer()
+        }
+        .background(Color(.systemGroupedBackground).ignoresSafeArea())
     }
 }
 

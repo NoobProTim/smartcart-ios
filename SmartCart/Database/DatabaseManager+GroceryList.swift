@@ -62,6 +62,16 @@ extension DatabaseManager {
     }
 
     func markGroceryListItemPurchased(itemID: Int64) {
+        let priceRow = try? db.pluck(
+            groceryListTable
+                .filter(groceryListItemID == itemID && groceryListPurchased == 0)
+                .select(groceryListPrice)
+        )
+        let expectedPrice = priceRow?[groceryListPrice]
+
+        // Write purchase record + trigger replenishment recalculation
+        markPurchased(itemID: itemID, priceAtPurchase: expectedPrice, quantity: 1)
+
         _ = try? db.run(
             groceryListTable
                 .filter(groceryListItemID == itemID && groceryListPurchased == 0)
@@ -79,7 +89,7 @@ extension DatabaseManager {
             .join(itemsTable, on: flyerItemID == itemID)
             .filter(flyerStartDate <= today)
         let rows = (try? db.prepare(query)) ?? AnySequence([])
-        return rows.compactMap { row in
+        return rows.compactMap { row -> ActiveSaleRow? in
             let end = row[flyerEndDate]
             if let end = end, end < today { return nil }
             let storeRow     = try? db.pluck(storesTable.filter(storeID == row[flyerStoreID]))

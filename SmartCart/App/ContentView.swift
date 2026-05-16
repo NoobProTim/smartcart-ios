@@ -18,9 +18,8 @@ struct ContentView: View {
 
     var body: some View {
         TabView(selection: $selectedTab) {
-
             // Tab 0 — Home: Smart List + On Sale Now segment
-            HomeView()
+            HomeView(onBrowseDealsTapped: { selectedTab = 1 })
                 .tabItem { Label("Home", systemImage: "house") }
                 .tag(0)
 

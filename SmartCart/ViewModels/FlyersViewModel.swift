@@ -25,6 +25,10 @@ final class FlyersViewModel: ObservableObject {
         return result
     }
 
+    var userStores: [String] {
+        DatabaseManager.shared.fetchSelectedStoreNames()
+    }
+
     var bestDeals: [FlyerDeal] {
         Array(
             deals

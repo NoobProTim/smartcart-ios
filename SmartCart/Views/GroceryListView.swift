@@ -172,7 +172,7 @@ private struct GroceryListRow: View {
     // Prefers the sale's store name; falls back to the item's own store if set.
     private var storeName: String? {
         if let sale = activeSale {
-            return DatabaseManager.shared.storeName(for: sale.storeID)
+            return DatabaseManager.shared.fetchStoreName(for: sale.storeID)
         }
         return nil
     }

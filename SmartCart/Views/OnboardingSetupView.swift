@@ -33,6 +33,7 @@ struct OnboardingSetupView: View {
     @State private var resolvedCity: String? = nil
     @State private var notificationGranted: Bool? = nil
     @State private var showNotificationDenied = false
+    @State private var showScanner = false
 
     private let availableStores = [
         "No Frills", "Loblaws", "Metro", "Food Basics",
@@ -52,7 +53,7 @@ struct OnboardingSetupView: View {
         VStack(spacing: 0) {
             // Step indicator
             HStack(spacing: 8) {
-                ForEach(0..<3) { step in
+                ForEach(0..<4) { step in
                     Capsule()
                         .fill(step == currentStep ? Color.accentColor : Color.secondary.opacity(0.25))
                         .frame(width: step == currentStep ? 24 : 8, height: 8)
@@ -65,11 +66,15 @@ struct OnboardingSetupView: View {
                 storeStep.tag(0)
                 postalStep.tag(1)
                 notificationStep.tag(2)
+                firstScanStep.tag(3)
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
             .animation(.easeInOut(duration: 0.3), value: currentStep)
         }
         .background(Color(.systemBackground).ignoresSafeArea())
+        .fullScreenCover(isPresented: $showScanner, onDismiss: { onComplete() }) {
+            MultiShotCaptureView()
+        }
     }
 
     // MARK: — Step 1: Store picker
@@ -231,7 +236,7 @@ struct OnboardingSetupView: View {
                     primaryButton(label: "Alerts enabled ✔", isEnabled: false) {}
                 }
 
-                Button("Maybe later") { onComplete() }
+                Button("Maybe later") { currentStep = 3 }
                     .font(.system(size: 14)).foregroundStyle(.secondary)
                     .accessibilityLabel("Skip notifications for now")
             }
@@ -246,6 +251,36 @@ struct OnboardingSetupView: View {
         }
     }
 
+    // MARK: — Step 4: First scan CTA
+    private var firstScanStep: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            stepHeader(
+                title: "Scan your first receipt",
+                subtitle: "SmartCart learns your prices and patterns from your receipts. The more you scan, the smarter it gets."
+            )
+
+            VStack(alignment: .leading, spacing: 16) {
+                benefitRow(icon: "dollarsign.circle", text: "See what you actually pay over time")
+                benefitRow(icon: "bell.badge",        text: "Get alerted when prices drop below your average")
+                benefitRow(icon: "arrow.clockwise",   text: "Know when you're running low before you run out")
+            }
+            .padding(.horizontal, 20)
+
+            Spacer()
+
+            VStack(spacing: 12) {
+                primaryButton(label: "Scan a Receipt", isEnabled: true) {
+                    showScanner = true
+                }
+
+                Button("Skip for now") { onComplete() }
+                    .font(.system(size: 14)).foregroundStyle(.secondary)
+                    .accessibilityLabel("Skip scanning and go to the app")
+            }
+        }
+        .padding(.bottom, 40)
+    }
+
     // MARK: — Helpers
 
     private func requestNotifications() {
@@ -254,7 +289,7 @@ struct OnboardingSetupView: View {
                 notificationGranted = granted
                 DatabaseManager.shared.setSetting(key: "notification_enabled", value: granted ? "1" : "0")
                 if granted {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { onComplete() }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { currentStep = 3 }
                 } else {
                     withAnimation { showNotificationDenied = true }
                 }

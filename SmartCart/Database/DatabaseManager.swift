@@ -217,6 +217,11 @@ final class DatabaseManager {
         }
     }
 
+    func averagePrice(for itemID: Int64) -> Double? {
+        let avg = rollingAveragePrice(itemID: itemID, days: 90)
+        return avg > 0 ? avg : nil
+    }
+
     @discardableResult
     func upsertStore(name: String) -> Int64 {
         if let existing = try? db.pluck(storesTable.filter(storeName == name)) {

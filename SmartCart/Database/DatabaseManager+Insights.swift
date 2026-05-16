@@ -19,15 +19,10 @@ extension DatabaseManager {
         let price = Expression<Double>("price")
         let purchasedAt = Expression<Date>("purchased_at")
 
-        do {
-            let query = table
-                .filter(purchasedAt >= start && purchasedAt <= end)
-                .select(price.sum)
-            return try db.scalar(query) ?? 0.0
-        } catch {
-            print("[DatabaseManager+Insights] totalSpend error: \(error)")
-            return 0.0
-        }
+        let rows = (try? db.prepare(
+            table.filter(purchasedAt >= start && purchasedAt <= end).select(price)
+        )) ?? AnySequence([])
+        return rows.reduce(0.0) { $0 + $1[price] }
     }
 
     // MARK: - Purchases in range
@@ -77,15 +72,12 @@ extension DatabaseManager {
         let itemIDCol = Expression<Int64>("item_id")
         let purchasedAt = Expression<Date>("purchased_at")
 
-        do {
-            let query = table
-                .filter(itemIDCol == itemID && purchasedAt >= since && price > 0)
-                .select(price.average)
-            return try db.scalar(query) ?? 0.0
-        } catch {
-            print("[DatabaseManager+Insights] rollingAveragePrice error: \(error)")
-            return 0.0
-        }
+        let rows = (try? db.prepare(
+            table.filter(itemIDCol == itemID && purchasedAt >= since && price > 0).select(price)
+        )) ?? AnySequence([])
+        let values = rows.map { $0[price] }
+        guard !values.isEmpty else { return 0.0 }
+        return values.reduce(0.0, +) / Double(values.count)
     }
 
     // MARK: - Spend by store
@@ -122,20 +114,17 @@ extension DatabaseManager {
         let itemIDCol = Expression<Int64>("item_id")
         let recordedAtCol = Expression<Date>("recorded_at")
 
-        do {
-            let query = table
-                .filter(
-                    itemIDCol == itemID
-                    && recordedAtCol >= start
-                    && recordedAtCol <= end
-                    && priceCol > 0
-                )
-                .select(priceCol.average)
-            return try db.scalar(query) ?? 0.0
-        } catch {
-            print("[DatabaseManager+Insights] averagePrice error: \(error)")
-            return 0.0
-        }
+        let rows = (try? db.prepare(
+            table.filter(
+                itemIDCol == itemID
+                && recordedAtCol >= start
+                && recordedAtCol <= end
+                && priceCol > 0
+            ).select(priceCol)
+        )) ?? AnySequence([])
+        let values = rows.map { $0[priceCol] }
+        guard !values.isEmpty else { return 0.0 }
+        return values.reduce(0.0, +) / Double(values.count)
     }
 
     // MARK: - All user items (lightweight)
