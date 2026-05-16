@@ -6,15 +6,27 @@
 // the screen shows a "Coming Soon" pending-approval card so the tab slot
 // is reserved and users understand the feature is intentional.
 //
+// GAP-2 fix: now accepts a storeName parameter so FlyersView can pass
+// the selected store through. The store name drives the pending-approval
+// card heading and will drive the WKWebView URL once approved.
+//
 // When Flipp approval arrives:
 //   1. Replace pendingApprovalContent with a WKWebView wrapper loading
-//      the Flipp embed URL for the user's postal code.
+//      the Flipp embed URL for the user's postal code + storeName.
 //   2. Remove the gated banner.
 //   3. Update Memory Blocks to mark Flipp compliance as resolved.
 
 import SwiftUI
 
 struct FlyerBrowserView: View {
+
+    // Store name passed in from FlyersView when a store tile is tapped.
+    // Shown in the card heading and will be used for the WKWebView URL.
+    let storeName: String
+
+    init(storeName: String = "") {
+        self.storeName = storeName
+    }
 
     // Set to true only after Flipp legal approval is confirmed.
     // Controlled by a DB setting so it can be toggled remotely via a
@@ -24,30 +36,35 @@ struct FlyerBrowserView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            Group {
-                if isApproved {
-                    // TODO(P2-FlyerBrowser): Replace with WKWebView embed
-                    // loading Flipp URL for user's postal code once approved.
-                    Text("Flyer browser enabled.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    pendingApprovalContent
-                }
+        Group {
+            if isApproved {
+                // TODO(P2-FlyerBrowser): Replace with WKWebView embed
+                // loading Flipp URL for user's postal code + storeName once approved.
+                Text("Flyer browser enabled.")
+                    .foregroundStyle(.secondary)
+            } else {
+                pendingApprovalContent
             }
-            .navigationTitle("Browse Flyers")
-            .navigationBarTitleDisplayMode(.large)
         }
+        .navigationTitle(storeName.isEmpty ? "Store Flyers" : storeName)
+        .navigationBarTitleDisplayMode(.large)
     }
 
     // MARK: - pendingApprovalContent
     // Card shown while Flipp legal approval is pending.
-    // Explains why the screen is not yet interactive — honest, not broken.
+    // Shows the selected store name prominently so it's clear which store
+    // the user tapped. Explains why the screen is not yet interactive.
     private var pendingApprovalContent: some View {
         VStack(spacing: 0) {
             Spacer()
 
             VStack(spacing: 20) {
+                // Store badge (if a store was selected)
+                if !storeName.isEmpty {
+                    StoreBadgeView(name: storeName)
+                        .scaleEffect(1.4)
+                }
+
                 // Icon
                 ZStack {
                     Circle()
@@ -60,7 +77,7 @@ struct FlyerBrowserView: View {
 
                 // Title + body
                 VStack(spacing: 8) {
-                    Text("Full Flyer Browse")
+                    Text(storeName.isEmpty ? "Full Flyer Browse" : "\(storeName) Flyers")
                         .font(.system(size: 20, weight: .bold))
                     Text("We're finalising our agreement with Flipp to show you full store flyers in-app. This feature will unlock automatically — no update needed.")
                         .font(.system(size: 15))
@@ -83,8 +100,8 @@ struct FlyerBrowserView: View {
                 .background(Color(.secondarySystemGroupedBackground))
                 .clipShape(Capsule())
 
-                // What you can do now — link to Flyers tab
-                Text("In the meantime, use the Flyers tab to see deals on your tracked items.")
+                // What you can do now — directs user back to Deals tab
+                Text("In the meantime, use the Deals tab to see this week's best prices from \(storeName.isEmpty ? "your stores" : storeName).")
                     .font(.system(size: 13))
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -103,5 +120,7 @@ struct FlyerBrowserView: View {
 }
 
 #Preview {
-    FlyerBrowserView()
+    NavigationStack {
+        FlyerBrowserView(storeName: "No Frills")
+    }
 }

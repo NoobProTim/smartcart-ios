@@ -1,10 +1,26 @@
 // FlyersView.swift — SmartCart/Views/FlyersView.swift
+//
+// The Deals tab. Shows this week's best prices from the user's stores.
+//
+// Layout (matches wireframe index-4.html):
+//   1. "Best prices this week" horizontal carousel (dark cards)
+//   2. Category filter chips (All, Dairy, Meat, Produce, Bakery, Pantry)
+//   3. Deal list rows (store badge, name, sale/reg price, % off, + button)
+//   4. "Browse Store Flyers" section — tappable store tiles drilling into
+//      FlyerBrowserView (GAP-2 fix: this section was missing)
+//
+// GAP-1 fix: navigationTitle changed from "Flyers" to "Deals".
+// GAP-2 fix: Browse Store Flyers section added at bottom of scroll view.
 
 import SwiftUI
 
 struct FlyersView: View {
     @StateObject private var vm = FlyersViewModel()
     @EnvironmentObject private var cartVM: GroceryListViewModel
+
+    // Controls navigation to FlyerBrowserView for a specific store.
+    // Nil means no navigation is active.
+    @State private var selectedFlyerStore: String? = nil
 
     var body: some View {
         NavigationStack {
@@ -13,10 +29,11 @@ struct FlyersView: View {
                     bestPriceCarousel
                     categoryChips
                     dealList
+                    browseStoreFlyers      // GAP-2: new section
                 }
             }
-            .navigationTitle("Flyers")
-            .navigationSubtitle("This week's best deals near you")
+            .navigationTitle("Deals")     // GAP-1: was "Flyers"
+            .navigationSubtitle("This week's best prices near you")
             .searchable(text: $vm.searchText, prompt: "Search deals...")
             .overlay {
                 if vm.isLoading {
@@ -25,11 +42,19 @@ struct FlyersView: View {
                         .background(Color(.systemBackground).opacity(0.6))
                 }
             }
+            // Navigate to FlyerBrowserView when a store tile is tapped.
+            // The store name is passed in but FlyerBrowserView currently
+            // shows the gated "pending approval" card regardless of store —
+            // the store name is wired in for when the WKWebView is enabled.
+            .navigationDestination(item: $selectedFlyerStore) { storeName in
+                FlyerBrowserView(storeName: storeName)
+            }
         }
         .task { await vm.load() }
     }
 
-    // MARK: Best price carousel
+    // MARK: - bestPriceCarousel
+    // Horizontal dark cards for the top deals this week.
     private var bestPriceCarousel: some View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Best prices this week")
@@ -52,7 +77,8 @@ struct FlyersView: View {
         }
     }
 
-    // MARK: Category chips
+    // MARK: - categoryChips
+    // Filter chips: All | Dairy | Meat | Produce | Bakery | Pantry
     private var categoryChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
@@ -81,7 +107,8 @@ struct FlyersView: View {
         }
     }
 
-    // MARK: Deal list
+    // MARK: - dealList
+    // Filtered list of deals. Empty state shown when no results match the filter.
     private var dealList: some View {
         LazyVStack(spacing: 8) {
             if vm.filteredDeals.isEmpty && !vm.isLoading {
@@ -103,7 +130,97 @@ struct FlyersView: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.bottom, 24)
+        .padding(.bottom, 8)
+    }
+
+    // MARK: - browseStoreFlyers
+    // GAP-2 fix: "Browse Store Flyers" section matching the wireframe.
+    // Shows a section header and one tile per user store. Tapping a tile
+    // navigates to FlyerBrowserView (which currently shows the pending-
+    // approval card until Flipp legal clears).
+    private var browseStoreFlyers: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Section header
+            Text("Browse Store Flyers")
+                .font(.system(size: 11, weight: .semibold).smallCaps())
+                .textCase(nil)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 20)
+                .padding(.top, 20)
+                .padding(.bottom, 10)
+
+            // Section subheading
+            Text("See full weekly circulars for your stores")
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 20)
+                .padding(.bottom, 12)
+
+            // Store tiles — one per user store (from vm.userStores)
+            LazyVStack(spacing: 8) {
+                ForEach(vm.userStores, id: \.self) { storeName in
+                    Button {
+                        selectedFlyerStore = storeName
+                    } label: {
+                        FlyerStoreTile(storeName: storeName, deals: vm.filteredDeals.filter {
+                            $0.storeName.lowercased() == storeName.lowercased()
+                        })
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 32)
+        }
+    }
+}
+
+// MARK: - FlyerStoreTile
+// One tappable row in the Browse Store Flyers section.
+// Shows store name (with colour badge), valid date range from the first
+// active deal for that store, and the top 3 deal names as a preview.
+private struct FlyerStoreTile: View {
+    let storeName: String
+    let deals: [FlyerDeal]      // Active deals at this store, for preview
+
+    // Date range label — derived from the first deal's expiry label if available.
+    private var dateRange: String {
+        deals.first?.flyerDateRange ?? deals.first?.expiryLabel ?? ""
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                // Store name badge
+                StoreBadgeView(name: storeName)
+
+                // Date range (e.g. "May 15–21")
+                if !dateRange.isEmpty {
+                    Text(dateRange)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+
+                // Preview: up to 3 deal names from this store
+                if !deals.isEmpty {
+                    let preview = deals.prefix(3).map { $0.name }.joined(separator: "  ·  ")
+                    Text(preview)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(Color(.systemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 

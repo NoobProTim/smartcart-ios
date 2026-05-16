@@ -1,17 +1,20 @@
 // ContentView.swift — SmartCart/App/ContentView.swift
 //
-// Root tab container. Five tabs: Home, Flyers, My List, Insights, Settings.
+// Root tab container. Five tabs: Home, Deals, My List, Insights, Settings.
 // GroceryListViewModel lives here as @StateObject and is injected as an
 // environmentObject so every child screen shares one source of truth for
 // the grocery list count (tab badge + list view).
 //
 // Sprint 2 fix: InsightsView wired at tag(3). Settings bumped to tag(4).
+// GAP-1 fix: tab label changed from "Flyers" to "Deals" to match wireframe.
 
 import SwiftUI
 
 struct ContentView: View {
     @StateObject private var cartVM = GroceryListViewModel()
-    @State private var selectedTab = 1  // Flyers tab until the user has list items
+    // selectedTab is exposed as an environmentObject so child screens
+    // (e.g. GroceryListView empty state) can switch tabs programmatically.
+    @State var selectedTab = 1  // Deals tab until the user has list items
 
     var body: some View {
         TabView(selection: $selectedTab) {
@@ -21,9 +24,9 @@ struct ContentView: View {
                 .tabItem { Label("Home", systemImage: "house") }
                 .tag(0)
 
-            // Tab 1 — Flyers: Flipp deal discovery
+            // Tab 1 — Deals: Flipp deal discovery (GAP-1: was "Flyers")
             FlyersView()
-                .tabItem { Label("Flyers", systemImage: "tag") }
+                .tabItem { Label("Deals", systemImage: "tag") }
                 .tag(1)
 
             // Tab 2 — My List: pre-shop grocery list with savings banner
@@ -35,7 +38,6 @@ struct ContentView: View {
             .tag(2)
 
             // Tab 3 — Insights: monthly spend, weekly chart, savings, store breakdown
-            // Sprint 2: this tab was built but not wired — fixed here.
             NavigationStack {
                 InsightsView()
             }
@@ -50,11 +52,26 @@ struct ContentView: View {
             .tag(4)
         }
         .environmentObject(cartVM)
+        .environment(\.selectedTab, $selectedTab)
         .onAppear {
             cartVM.load()
             // Return users who already have items land on Home.
-            // New users (empty list) stay on the Flyers discovery tab.
+            // New users (empty list) stay on the Deals discovery tab.
             if !cartVM.items.isEmpty { selectedTab = 0 }
         }
+    }
+}
+
+// MARK: - SelectedTab environment key
+// Lets any child view switch the root tab by writing to this binding.
+// Usage: @Environment(\.selectedTab) private var selectedTab
+private struct SelectedTabKey: EnvironmentKey {
+    static let defaultValue: Binding<Int> = .constant(0)
+}
+
+extension EnvironmentValues {
+    var selectedTab: Binding<Int> {
+        get { self[SelectedTabKey.self] }
+        set { self[SelectedTabKey.self] = newValue }
     }
 }
